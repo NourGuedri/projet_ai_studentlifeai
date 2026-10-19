@@ -26,6 +26,8 @@ INSTALLED_APPS = [
     "accounts",
     "profiles",
     "learning",
+    "meetings",
+    "mails",
 ]
 
 MIDDLEWARE = [
