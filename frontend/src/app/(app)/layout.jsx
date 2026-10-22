@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Shell from "@/components/Shell";
 import { Loading } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
+import { NotificationsProvider } from "@/lib/notifications";
 
 export default function AppLayout({ children }) {
   const { user, loading } = useAuth();
@@ -12,5 +13,9 @@ export default function AppLayout({ children }) {
     if (!loading && !user) router.replace("/login");
   }, [loading, user, router]);
   if (loading || !user) return <Loading full />;
-  return <Shell>{children}</Shell>;
+  return (
+    <NotificationsProvider>
+      <Shell>{children}</Shell>
+    </NotificationsProvider>
+  );
 }

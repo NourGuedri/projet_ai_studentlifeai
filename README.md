@@ -37,6 +37,32 @@ The configured model must support Gemini's `generateContent` endpoint. The forme
 is the current default. `GEMINI_TIMEOUT` is the request timeout in seconds (default
 120); a read timeout is retried once automatically.
 
+## 3b. Tableau de bord, notifications et administration
+
+New API (all under `/api/`, JWT required):
+
+| Route | Who | What |
+|---|---|---|
+| `notifications/`, `notifications/unread-count/`, `notifications/<id>/read/`, `notifications/read-all/` | everyone | own notifications (bell + `/notifications` page) |
+| `reports/` (POST) | everyone | report a published formation or one of its quizzes |
+| `admin/stats/` | admin | usage statistics for the admin dashboard |
+| `admin/users/` (list, create, PATCH role/active, DELETE) | admin | user and role management |
+| `admin/formations/` (+ `<id>/unpublish/`, DELETE) | admin | moderation of formations |
+| `admin/reports/` (+ `<id>/resolve/`) | admin | handle reports (dismiss, unpublish, delete) |
+| `admin/announcements/` (POST) | admin | notify everybody or one role |
+
+Create the first administrator with `python manage.py createsuperuser` (it gets the `admin` role), then manage everybody else from **Administration** in the sidebar.
+Run `python manage.py migrate` after pulling (two new apps: `notifications`, `administration`).
+
+**For the other modules:** to notify a user from your own code:
+
+```python
+from notifications.services import notify
+notify(user, "Planning mis à jour", "Votre cours de jeudi est annulé.", link="/planning", kind="warning")  # kind: info | success | warning | announcement
+```
+
+Run the tests with `python manage.py test`.
+
 ## 4. Layout
 
 ```

@@ -155,6 +155,10 @@ const ICONS = {
   menu: ["M4 6h16M4 12h16M4 18h16"],
   close: ["M6 6l12 12M18 6L6 18"],
   logout: ["M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", "M16 17l5-5-5-5M21 12H9"],
+  bell: ["M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.94 1.94 0 0 0 3.4 0"],
+  users: ["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8z", "M22 21v-2a4 4 0 0 0-3-3.9", "M16 3.1a4 4 0 0 1 0 7.8"],
+  flag: ["M4 22V4", "M4 4h13l-2 4 2 4H4"],
+  megaphone: ["M3 11v2a1 1 0 0 0 1 1h3l8 4V6L7 10H4a1 1 0 0 0-1 1z", "M19 9a4 4 0 0 1 0 6"],
 };
 export function Icon({ name, className = "h-5 w-5" }) {
   return (

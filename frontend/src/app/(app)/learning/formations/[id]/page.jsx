@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input, Loading, PageHeader, ProgressBar, Textarea, btnClass, cx } from "@/components/ui";
+import ReportButton from "@/components/ReportButton";
 import { api } from "@/lib/api";
 import { LEVELS, MATERIAL_KINDS, fmtSize, label } from "@/lib/labels";
 
@@ -194,7 +195,12 @@ export default function FormationPage() {
             <Button variant={f.is_published ? "secondary" : "success"} loading={busy} onClick={publish}>{f.is_published ? "Dépublier" : "Publier"}</Button>
             <Button variant="danger" onClick={removeFormation}>Supprimer</Button>
           </>
-        ) : !f.enrolled && <Button variant="success" loading={busy} onClick={enroll}>S'inscrire</Button>} />
+        ) : (
+          <>
+            {!f.enrolled && <Button variant="success" loading={busy} onClick={enroll}>S'inscrire</Button>}
+            {f.is_published && <ReportButton targetType="formation" targetId={f.id} />}
+          </>
+        )} />
 
       <div className="mb-4"><Alert>{error}</Alert></div>
       {f.description && <p className="mb-6 max-w-prose whitespace-pre-line text-slate-700">{f.description}</p>}
@@ -283,6 +289,7 @@ export default function FormationPage() {
                     {f.is_owner && (
                       <Link href={`/learning/quizzes/${quiz.id}/edit`} className={btnClass("secondary", "sm")}>Modifier</Link>
                     )}
+                    {!f.is_owner && f.is_published && <ReportButton targetType="quiz" targetId={quiz.id} size="sm" />}
                   </div>
                 </Card>
               </li>
