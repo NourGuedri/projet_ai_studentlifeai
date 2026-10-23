@@ -18,3 +18,13 @@ export function fmtSize(bytes) {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} Mo`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} Go`;
 }
+
+export const MEETING_STATUS = {
+  DRAFT: ["Brouillon", "slate"], TRANSCRIBED: ["Transcrite", "blue"], ANALYZED: ["Analysée", "green"], FAILED: ["Échec", "red"],
+};
+
+export const fmtDateTime = (iso) =>
+  iso ? new Date(iso).toLocaleString("fr-FR", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+
+/** "YYYY-MM-DD" read as a local day (new Date("2026-10-23") would be UTC midnight). */
+export const fmtDay = (day) => (day ? fmtDate(`${day}T00:00:00`) : "");

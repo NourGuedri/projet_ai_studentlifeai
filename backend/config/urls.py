@@ -11,6 +11,9 @@ urlpatterns = [
     path("api/learning/", include("learning.urls")),
     path("api/notifications/", include("notifications.urls")),
     path("api/", include("administration.urls")),
+    path("api/meetings/", include("meetings.urls")),
+    path("api/mails/", include("mails.urls")),
+
 ]
 if settings.DEBUG:
     urlpatterns.append(re_path(r"^media/(?P<path>.*)$", serve_media))
