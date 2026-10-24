@@ -19,6 +19,9 @@ const NAV = [
   { href: "/learning/results", label: "Résultats", icon: "chart", roles: ["student"] },
   { href: "/learning/formations", label: "Formations", icon: "cap", roles: ALL },
   { href: "/learning/teach", label: "Enseigner", icon: "plus", roles: ["teacher", "admin"] },
+  { group: "Vie quotidienne", roles: ["student"] },
+  { href: "/closet", label: "Mon dressing", icon: "shirt", roles: ["student"] },
+  { href: "/closet/outfit", label: "Tenue du jour", icon: "sun", roles: ["student"] },
 ];
 
 function Brand() {

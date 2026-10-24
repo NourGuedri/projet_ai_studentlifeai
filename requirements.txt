@@ -7,7 +7,11 @@ python-docx>=1.1
 requests>=2.31
 python-dotenv>=1.0
 cryptography>=42.0
+pillow>=10.0   # photos de la garde-robe (ImageField)
 
 # Optionnel : transcription audio locale des réunions (POST /api/meetings/{id}/transcribe/).
 # Sans ce paquet, l'utilisateur colle le texte de la réunion.
 # faster-whisper>=1.0
+
+# Optionnel : détection automatique des vêtements (module closet). Voir backend/closet/README.md
+# -r backend/closet/ml/requirements-ml.txt

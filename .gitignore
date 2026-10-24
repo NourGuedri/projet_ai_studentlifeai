@@ -7,3 +7,5 @@ backend/media/
 .env
 node_modules/
 .next/
+backend/closet/ml/dataset/*
+!backend/closet/ml/dataset/.gitkeep
