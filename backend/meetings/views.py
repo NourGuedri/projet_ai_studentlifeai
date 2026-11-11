@@ -37,8 +37,11 @@ class MeetingViewSet(viewsets.ModelViewSet):
             meeting.save(update_fields=["status"])
 
     def _fail(self, meeting, message, status=400):
-        meeting.status = Meeting.FAILED
-        meeting.save(update_fields=["status", "updated_at"])
+        # A failed retry must not hide results the meeting already has.
+        has_results = meeting.summary.strip() or meeting.decisions or meeting.tasks
+        if not has_results:
+            meeting.status = Meeting.FAILED
+            meeting.save(update_fields=["status", "updated_at"])
         return Response({"detail": message}, status=status)
 
     def _check_transcript(self, meeting):
