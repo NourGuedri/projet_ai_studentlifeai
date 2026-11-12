@@ -1,13 +1,17 @@
-from rest_framework import viewsets
+from django.db.models import Q
+from django.utils import timezone
+from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from common import ai
+from notifications.services import notify_many
 
 from . import services
 from .models import Meeting
-from .serializers import MeetingSerializer
+from .serializers import MeetingSerializer, display_name
 
 MIN_TRANSCRIPT_CHARS = 30
 
@@ -18,7 +22,27 @@ class MeetingViewSet(viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        return Meeting.objects.filter(owner=self.request.user)
+        # The organizer and the invited participants see the meeting.
+        user = self.request.user
+        return (
+            Meeting.objects.filter(Q(owner=user) | Q(participants=user)).distinct()
+            .select_related("owner").prefetch_related("participants")
+        )
+
+    def get_object(self):
+        # Participants only read: editing, deleting and the AI actions belong to the organizer.
+        meeting = super().get_object()
+        if self.request.method not in permissions.SAFE_METHODS and meeting.owner_id != self.request.user.id:
+            raise PermissionDenied("Seul l'organisateur de la réunion peut effectuer cette action.")
+        return meeting
+
+    def _notify_invited(self, meeting, users):
+        if not users:
+            return
+        when = meeting.scheduled_at and timezone.localtime(meeting.scheduled_at)
+        when_text = when.strftime("le %d/%m/%Y à %H:%M") if when else meeting.date.strftime("le %d/%m/%Y")
+        message = f"{display_name(meeting.owner)} vous invite à la réunion « {meeting.title} » {when_text}."
+        notify_many(users, "Invitation à une réunion", message, link=f"/reunions/{meeting.id}")
 
     @staticmethod
     def _status_from_transcript(meeting):
@@ -29,12 +53,14 @@ class MeetingViewSet(viewsets.ModelViewSet):
         if meeting.transcript.strip():
             meeting.status = Meeting.TRANSCRIBED
             meeting.save(update_fields=["status"])
+        self._notify_invited(meeting, serializer.new_participants)
 
     def perform_update(self, serializer):
         meeting = serializer.save()
         if "transcript" in serializer.validated_data:
             meeting.status = self._status_from_transcript(meeting)
             meeting.save(update_fields=["status"])
+        self._notify_invited(meeting, serializer.new_participants)
 
     def _fail(self, meeting, message, status=400):
         # A failed retry must not hide results the meeting already has.

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { AiCard, TaskList } from "@/components/AiResult";
 import { Alert, Badge, Button, Card, Loading, PageHeader, Textarea, btnClass } from "@/components/ui";
 import { api } from "@/lib/api";
-import { MEETING_STATUS, fmtDay } from "@/lib/labels";
+import { MEETING_STATUS, fmtDateTime, fmtDay } from "@/lib/labels";
 
 export default function MeetingDetailPage() {
   const { id } = useParams();
@@ -64,18 +64,50 @@ export default function MeetingDetailPage() {
   const [statusLabel, tone] = MEETING_STATUS[meeting.status] ?? [meeting.status, "slate"];
   const hasTranscript = meeting.transcript.trim().length > 0;
   const dirty = transcript !== meeting.transcript;
+  // Invited participants only read: no AI, no deletion, no transcript editing.
+  const isOwner = meeting.is_owner;
+  const when = meeting.scheduled_at ? fmtDateTime(meeting.scheduled_at) : fmtDay(meeting.date);
 
   return (
     <>
-      <PageHeader title={meeting.title} subtitle={fmtDay(meeting.date)}
+      <PageHeader title={meeting.title} subtitle={`${when} · Organisé par ${isOwner ? "vous" : meeting.owner_name}`}
         actions={<>
           <Link href="/reunions" className={btnClass("ghost")}>Retour</Link>
-          <Button variant="danger" onClick={remove}>Supprimer</Button>
+          {meeting.call_url && (
+            <a href={meeting.call_url} target="_blank" rel="noopener noreferrer" className={btnClass("success")}>Rejoindre l'appel</a>
+          )}
+          {isOwner && <Button variant="danger" onClick={remove}>Supprimer</Button>}
         </>} />
-      <div className="-mt-3 mb-5"><Badge tone={tone}>{statusLabel}</Badge></div>
+      <div className="-mt-3 mb-5 flex flex-wrap gap-1.5">
+        <Badge tone={tone}>{statusLabel}</Badge>
+        {meeting.is_call && <Badge tone="blue">Appel vidéo</Badge>}
+        {!isOwner && <Badge tone="amber">Invité</Badge>}
+      </div>
 
       <div className="space-y-6">
-        <Card className="flex flex-wrap items-center gap-2">
+        {(meeting.is_call || meeting.participants.length > 0) && (
+          <Card>
+            <h2 className="mb-3 font-display text-lg font-semibold">Participants</h2>
+            <ul className="divide-y divide-slate-100 text-sm">
+              <li className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="font-medium text-navy-900">{meeting.owner_name}</span>
+                <Badge tone="green">Organisateur</Badge>
+              </li>
+              {meeting.participants.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <span className="font-medium text-navy-900">{p.full_name}</span>
+                  {p.full_name !== p.email && <span className="text-slate-500">{p.email}</span>}
+                </li>
+              ))}
+            </ul>
+            {meeting.participants.length === 0 && <p className="mt-2 text-sm text-slate-500">Aucun participant invité.</p>}
+            {meeting.call_url && (
+              <p className="mt-3 text-sm text-slate-500">L'appel s'ouvre dans Jitsi Meet, dans un nouvel onglet.</p>
+            )}
+          </Card>
+        )}
+
+        {isOwner && <Card className="flex flex-wrap items-center gap-2">
           {meeting.audio_file && (
             <Button onClick={() => run("transcribe")} loading={busy === "transcribe"} disabled={!!busy}>Transcrire</Button>
           )}
@@ -84,7 +116,7 @@ export default function MeetingDetailPage() {
           {busy === "transcribe" && <span className="text-sm text-slate-500">Transcription en cours, cela peut prendre quelques minutes…</span>}
           {!hasTranscript && !busy && <span className="text-sm text-slate-500">Transcrivez l'audio ou collez le texte ci-dessous pour lancer l'analyse.</span>}
           {dirty && !busy && <span className="text-sm text-slate-500">Enregistrez la transcription avant de lancer l'analyse.</span>}
-        </Card>
+        </Card>}
         <Alert>{error}</Alert>
 
         {meeting.audio_file && (
@@ -94,14 +126,21 @@ export default function MeetingDetailPage() {
           </Card>
         )}
 
-        <Card>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-display text-lg font-semibold">Transcription</h2>
-            {dirty && <Button size="sm" onClick={saveTranscript} loading={busy === "save"} disabled={!!busy && busy !== "save"}>Enregistrer</Button>}
-          </div>
-          <Textarea rows={8} value={transcript} onChange={(e) => setTranscript(e.target.value)}
-            placeholder="Collez ici le texte de la réunion, ou lancez la transcription de l'audio." />
-        </Card>
+        {isOwner ? (
+          <Card>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-lg font-semibold">Transcription</h2>
+              {dirty && <Button size="sm" onClick={saveTranscript} loading={busy === "save"} disabled={!!busy && busy !== "save"}>Enregistrer</Button>}
+            </div>
+            <Textarea rows={8} value={transcript} onChange={(e) => setTranscript(e.target.value)}
+              placeholder="Collez ici le texte de la réunion, ou lancez la transcription de l'audio." />
+          </Card>
+        ) : hasTranscript && (
+          <Card>
+            <h2 className="mb-3 font-display text-lg font-semibold">Transcription</h2>
+            <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{meeting.transcript}</p>
+          </Card>
+        )}
 
         {meeting.summary && (
           <AiCard title="Résumé">
