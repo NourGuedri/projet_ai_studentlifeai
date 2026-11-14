@@ -1,9 +1,9 @@
 "use client";
+import { useAuth } from "@/lib/auth";
+import { useNotifications } from "@/lib/notifications";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
-import { useNotifications } from "@/lib/notifications";
 import Logo from "./Logo";
 import { Icon, cx } from "./ui";
 
@@ -19,6 +19,12 @@ const NAV = [
   { href: "/learning/results", label: "Résultats", icon: "chart", roles: ["student"] },
   { href: "/learning/formations", label: "Formations", icon: "cap", roles: ALL },
   { href: "/learning/teach", label: "Enseigner", icon: "plus", roles: ["teacher", "admin"] },
+  { group: "Vie quotidienne", roles: ["student"] },
+  { href: "/closet", label: "Mon dressing", icon: "shirt", roles: ["student"] },
+  { href: "/closet/outfit", label: "Tenue du jour", icon: "sun", roles: ["student"] },
+    { group: "Réunions et e-mails", roles: ["student"] },
+  { href: "/reunions", label: "Réunions", icon: "mic", roles: ["student"] },
+  { href: "/emails", label: "E-mails", icon: "mail", roles: ["student"] },
 ];
 
 function Brand() {
@@ -34,6 +40,7 @@ function Sidebar({ onNavigate }) {
   const router = useRouter();
   const { user, logout } = useAuth();
   const items = NAV.filter((n) => n.group || n.roles.includes(user.role));
+  const { unread } = useNotifications();
   const current = NAV.filter((n) => n.href && (pathname === n.href || pathname.startsWith(n.href + "/")))
     .sort((a, b) => b.href.length - a.href.length)[0];
 
