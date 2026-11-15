@@ -9,9 +9,11 @@ from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from common import ai
+from notifications.models import Notification
 
 from .models import Meeting
 
+INVITATION = "Invitation à une réunion"
 TRANSCRIPT = (
     "Ali : on valide le sujet du projet de fin d'études. Sara : je rédige le cahier des charges "
     "pour vendredi 23 octobre. Ali : je prépare la maquette."
@@ -180,3 +182,122 @@ class MeetingTests(APITestCase):
         response = self.client.patch(self.url(self.meeting), {"transcript": TRANSCRIPT + " Fin."}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["status"], Meeting.TRANSCRIBED)
+
+
+# ------------------------------------------------------------------ video calls (Jitsi)
+@override_settings(JITSI_BASE_URL="https://meet.example.org")
+class VideoCallTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(
+            email="orga@example.com", password="password123", first_name="Sara", last_name="Ben Ali",
+        )
+        self.guest = user_model.objects.create_user(email="invite@example.com", password="password123")
+        self.guest2 = user_model.objects.create_user(email="invite2@example.com", password="password123")
+        self.outsider = user_model.objects.create_user(email="externe@example.com", password="password123")
+        user_model.objects.create_user(email="inactif@example.com", password="password123", is_active=False)
+        self.client.force_authenticate(self.owner)
+
+    def plan_call(self, emails=("invite@example.com",), **extra):
+        payload = {
+            "title": "Point PFE en visio", "video_call": True,
+            "scheduled_at": "2026-11-20T14:30:00+01:00", "participant_emails": list(emails), **extra,
+        }
+        return self.client.post("/api/meetings/", payload, format="json")
+
+    def test_create_call_with_participants(self):
+        response = self.plan_call(["INVITE@example.com", "invite2@example.com"])
+        self.assertEqual(response.status_code, 201, response.data)
+        meeting = Meeting.objects.get(pk=response.data["id"])
+        self.assertEqual(set(meeting.participants.all()), {self.guest, self.guest2})
+        self.assertRegex(meeting.call_room, r"^StudentLife-[A-Za-z0-9]{20,}$")
+        self.assertEqual(response.data["call_url"], f"https://meet.example.org/{meeting.call_room}")
+        self.assertTrue(response.data["is_call"])
+        self.assertTrue(response.data["is_owner"])
+        self.assertEqual(response.data["owner_name"], "Sara Ben Ali")
+        self.assertEqual(response.data["status"], Meeting.DRAFT)  # no transcript nor audio needed
+        self.assertEqual(str(meeting.date), "2026-11-20")
+        self.assertEqual(
+            sorted(p["email"] for p in response.data["participants"]), ["invite2@example.com", "invite@example.com"],
+        )
+
+    def test_call_requires_date_and_time(self):
+        response = self.plan_call(scheduled_at=None)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("scheduled_at", response.data)
+
+    def test_call_links_are_unique(self):
+        first = self.plan_call().data
+        second = self.plan_call().data
+        self.assertTrue(first["call_url"])
+        self.assertNotEqual(first["call_url"], second["call_url"])
+
+    def test_regular_meeting_has_no_call_link(self):
+        response = self.client.post("/api/meetings/", {"title": "Notes", "transcript": TRANSCRIPT}, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["call_url"], "")
+        self.assertFalse(response.data["is_call"])
+
+    def test_invited_participants_are_notified(self):
+        meeting_id = self.plan_call().data["id"]
+        notification = Notification.objects.get(user=self.guest, title=INVITATION)
+        self.assertIn("Sara Ben Ali", notification.message)
+        self.assertIn("Point PFE en visio", notification.message)
+        self.assertIn("20/11/2026 à 14:30", notification.message)
+        self.assertEqual(notification.link, f"/reunions/{meeting_id}")
+        self.assertFalse(Notification.objects.filter(user=self.owner, title=INVITATION).exists())
+
+    def test_only_new_participants_are_notified(self):
+        meeting_id = self.plan_call().data["id"]
+        response = self.client.patch(
+            f"/api/meetings/{meeting_id}/",
+            {"participant_emails": ["invite@example.com", "invite2@example.com"]}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Notification.objects.filter(user=self.guest, title=INVITATION).count(), 1)
+        self.assertEqual(Notification.objects.filter(user=self.guest2, title=INVITATION).count(), 1)
+
+    def test_participant_can_read_but_not_modify(self):
+        meeting_id = self.plan_call().data["id"]
+        Meeting.objects.filter(pk=meeting_id).update(transcript=TRANSCRIPT)
+        self.client.force_authenticate(self.guest)
+
+        listed = self.client.get("/api/meetings/")
+        self.assertEqual([m["id"] for m in listed.data], [meeting_id])
+        detail = self.client.get(f"/api/meetings/{meeting_id}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertFalse(detail.data["is_owner"])
+        self.assertTrue(detail.data["call_url"])
+
+        response = self.client.patch(f"/api/meetings/{meeting_id}/", {"title": "Modifié"}, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/meetings/{meeting_id}/").status_code, 403)
+        with patch("common.ai.generate_json") as generate:
+            for action in ("transcribe", "summarize", "extract"):
+                self.assertEqual(self.client.post(f"/api/meetings/{meeting_id}/{action}/").status_code, 403)
+            generate.assert_not_called()
+        self.assertEqual(Meeting.objects.get(pk=meeting_id).title, "Point PFE en visio")
+
+    def test_unknown_or_inactive_email_is_rejected(self):
+        for email in ("personne@example.com", "inactif@example.com"):
+            response = self.plan_call([email])
+            self.assertEqual(response.status_code, 400)
+            self.assertIn(email, str(response.data["participant_emails"]))
+        self.assertFalse(Meeting.objects.exists())
+        self.assertFalse(Notification.objects.filter(title=INVITATION).exists())
+
+    def test_cannot_invite_yourself(self):
+        response = self.plan_call(["orga@example.com"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("vous-même", str(response.data["participant_emails"]))
+
+    def test_participant_limit(self):
+        response = self.plan_call([f"p{i}@example.com" for i in range(21)])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("20", str(response.data["participant_emails"]))
+
+    def test_uninvited_user_cannot_see_the_meeting(self):
+        meeting_id = self.plan_call().data["id"]
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.get(f"/api/meetings/{meeting_id}/").status_code, 404)
+        self.assertEqual(self.client.get("/api/meetings/").data, [])
