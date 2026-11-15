@@ -19,6 +19,10 @@ const NAV = [
   { href: "/learning/results", label: "Résultats", icon: "chart", roles: ["student"] },
   { href: "/learning/formations", label: "Formations", icon: "cap", roles: ALL },
   { href: "/learning/teach", label: "Enseigner", icon: "plus", roles: ["teacher", "admin"] },
+  { group: "Administration", roles: ["admin"] },
+  { href: "/admin/users", label: "Utilisateurs", icon: "users", roles: ["admin"] },
+  { href: "/admin/content", label: "Contenus et signalements", icon: "flag", roles: ["admin"] },
+  { href: "/admin/announcements", label: "Annonces", icon: "megaphone", roles: ["admin"] },
 ];
 
 function Brand() {
@@ -33,7 +37,8 @@ function Sidebar({ onNavigate }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const items = NAV.filter((n) => n.group || n.roles.includes(user.role));
+  const { unread } = useNotifications();
+  const items = NAV.filter((n) => n.roles.includes(user.role));
   const current = NAV.filter((n) => n.href && (pathname === n.href || pathname.startsWith(n.href + "/")))
     .sort((a, b) => b.href.length - a.href.length)[0];
 

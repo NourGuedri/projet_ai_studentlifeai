@@ -36,6 +36,9 @@ def generate_json(prompt, timeout=None):
     for attempt in range(2):
         try:
             response = requests.post(url, headers={"x-goog-api-key": key}, json=body, timeout=timeout)
+            if response.status_code == 503 and attempt == 0:
+                time.sleep(1)
+                continue
             break
         except requests.exceptions.ReadTimeout as exc:
             if attempt == 1:

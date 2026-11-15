@@ -8,8 +8,7 @@ The UI is in French, responsive (sidebar on PC, drawer menu on tablet and phone)
 ```bash
 cd backend
 python -m venv .venv
-# Windows:      .venv\Scripts\activate
-# macOS/Linux:  source .venv/bin/activate
+# Windows:      .\venv\Scripts\Activate.ps1
 pip install -r ../requirements.txt
 python manage.py migrate      # migrations are included
 python manage.py runserver    # http://localhost:8000  (admin: /admin)

@@ -161,6 +161,7 @@ class QuizRolePermissionTests(TestCase):
     def test_ai_retries_once_after_a_read_timeout(self, post, sleep):
         response = type("Response", (), {
             "ok": True,
+            "status_code": 200,
             "json": lambda self: {
                 "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}]
             },
@@ -172,6 +173,49 @@ class QuizRolePermissionTests(TestCase):
         self.assertEqual(result, {"ok": True})
         self.assertEqual(post.call_count, 2)
         self.assertEqual(post.call_args.kwargs["timeout"], 90.0)
+        sleep.assert_called_once_with(1)
+
+    @patch("common.ai.time.sleep")
+    @patch("common.ai.requests.post")
+    def test_ai_retries_once_after_a_service_unavailable_response(self, post, sleep):
+        unavailable = type("Response", (), {
+            "ok": False,
+            "status_code": 503,
+            "reason": "Service Unavailable",
+            "json": lambda self: {"error": {"message": "Temporary overload"}},
+        })()
+        success = type("Response", (), {
+            "ok": True,
+            "status_code": 200,
+            "json": lambda self: {
+                "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}]
+            },
+        })()
+        post.side_effect = [unavailable, success]
+
+        with patch.dict("common.ai.os.environ", {"GEMINI_API_KEY": "test-key"}):
+            result = ai.generate_json("test prompt")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch("common.ai.time.sleep")
+    @patch("common.ai.requests.post")
+    def test_ai_reports_service_unavailable_after_one_retry(self, post, sleep):
+        unavailable = type("Response", (), {
+            "ok": False,
+            "status_code": 503,
+            "reason": "Service Unavailable",
+            "json": lambda self: {"error": {"message": "Temporary overload"}},
+        })()
+        post.return_value = unavailable
+
+        with patch.dict("common.ai.os.environ", {"GEMINI_API_KEY": "test-key"}):
+            with self.assertRaisesRegex(ai.AIError, "HTTP 503 : Temporary overload"):
+                ai.generate_json("test prompt")
+
+        self.assertEqual(post.call_count, 2)
         sleep.assert_called_once_with(1)
 
     @patch("common.ai.time.sleep")
