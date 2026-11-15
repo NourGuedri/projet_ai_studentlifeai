@@ -46,7 +46,9 @@ function Sidebar({ onNavigate }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const items = NAV.filter((n) => n.group || n.roles.includes(user.role));
+  const { unread } = useNotifications();
+  const items = NAV.filter((n) => n.roles.includes(user.role));
+  const { unread } = useNotifications();
   const current = NAV.filter((n) => n.href && (pathname === n.href || pathname.startsWith(n.href + "/")))
     .sort((a, b) => b.href.length - a.href.length)[0];
 
