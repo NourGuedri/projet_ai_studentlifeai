@@ -147,6 +147,18 @@ class MeetingTests(APITestCase):
         self.meeting.refresh_from_db()
         self.assertEqual(self.meeting.status, Meeting.FAILED)
 
+    def test_ai_error_keeps_an_analyzed_meeting_analyzed(self):
+        self.meeting.summary = "Le sujet du PFE est validé."
+        self.meeting.status = Meeting.ANALYZED
+        self.meeting.save()
+        with patch("common.ai.generate_json", side_effect=ai.AIError("Le service d'IA a renvoyé HTTP 503.")):
+            response = self.client.post(self.url(self.meeting, "summarize"))
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.data["detail"], "Le service d'IA a renvoyé HTTP 503.")
+        self.meeting.refresh_from_db()
+        self.assertEqual(self.meeting.status, Meeting.ANALYZED)
+        self.assertEqual(self.meeting.summary, "Le sujet du PFE est validé.")
+
     def test_invalid_ai_response_returns_502_and_marks_failed(self):
         with patch("common.ai.generate_json", return_value={"decisions": "pas une liste"}):
             response = self.client.post(self.url(self.meeting, "extract"))

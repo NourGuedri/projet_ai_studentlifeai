@@ -23,6 +23,9 @@ const NAV = [
   { href: "/admin/users", label: "Utilisateurs", icon: "users", roles: ["admin"] },
   { href: "/admin/content", label: "Contenus et signalements", icon: "flag", roles: ["admin"] },
   { href: "/admin/announcements", label: "Annonces", icon: "megaphone", roles: ["admin"] },
+  { group: "Réunions et e-mails", roles: ["student"] },
+  { href: "/reunions", label: "Réunions", icon: "mic", roles: ["student"] },
+  { href: "/emails", label: "E-mails", icon: "mail", roles: ["student"] },
 ];
 
 function Brand() {
