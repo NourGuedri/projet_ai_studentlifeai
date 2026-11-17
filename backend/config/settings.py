@@ -131,3 +131,14 @@ CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
 # STUN/TURN servers given to the browsers, as JSON, e.g.
 # WEBRTC_ICE_SERVERS=[{"urls": "stun:stun.example.org:3478"}]. Empty list: same machine / local network only.
 WEBRTC_ICE_SERVERS = json.loads(os.getenv("WEBRTC_ICE_SERVERS", "") or "[]")
+
+# Meeting recordings: kept outside MEDIA_ROOT (never public), served by GET /api/meetings/<id>/audio/.
+MEETINGS_AUDIO_ROOT = Path(os.getenv("MEETINGS_AUDIO_ROOT", "") or BASE_DIR / "private_media")
+MEETING_MAX_AUDIO_MB = int(os.getenv("MEETING_MAX_AUDIO_MB", "100"))
+# Transcription and AI analysis run in a background thread after a recording is sent. "1" runs them in the
+# request itself (the tests set it with override_settings).
+MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"
+# faster-whisper model: tiny, base, small, medium... (bigger = more accurate but slower on CPU).
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+# Language of the meetings, forced instead of detected (detection is unreliable on short or noisy recordings).
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "fr")

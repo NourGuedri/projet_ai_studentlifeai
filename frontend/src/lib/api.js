@@ -78,6 +78,20 @@ async function request(path, { method = "GET", body, form, retry = true } = {}) 
   return data;
 }
 
+/** Binary file behind the JWT (e.g. a meeting recording): an <audio src> cannot send the Authorization header. */
+async function blob(path, retry = true) {
+  const headers = tokens.access ? { Authorization: `Bearer ${tokens.access}` } : {};
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, { headers });
+  } catch {
+    throw new ApiError("Impossible de joindre le serveur. Vérifiez que le backend est lancé.", 0);
+  }
+  if (res.status === 401 && retry && tokens.refresh && (await refreshAccess())) return blob(path, false);
+  if (!res.ok) throw new ApiError(flatten(await res.json().catch(() => null)), res.status);
+  return res.blob();
+}
+
 /** multipart upload with progress (fetch cannot report upload progress). */
 export function upload(path, form, onProgress, retry = true) {
   return new Promise((resolve, reject) => {
@@ -106,4 +120,5 @@ export const api = {
   del: (path) => request(path, { method: "DELETE" }),
   form: (path, form, method = "POST") => request(path, { method, form }),
   upload,
+  blob,
 };

@@ -1,13 +1,24 @@
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.validators import FileExtensionValidator
 from django.utils import timezone
 from rest_framework import serializers
 
 from common.tasks import clean_tasks
 
-from .models import Meeting
+from .models import AUDIO_EXTENSIONS, Meeting
 
-MAX_AUDIO_FILE = 25 * 1024 * 1024
 MAX_PARTICIPANTS = 20
+MAX_AI_ITEMS = 20  # topics / key points kept from one AI answer
+
+
+def validate_audio(value):
+    """Format and size of a meeting recording (MEETING_MAX_AUDIO_MB, 100 MB by default)."""
+    FileExtensionValidator(AUDIO_EXTENSIONS)(value)
+    limit_mb = settings.MEETING_MAX_AUDIO_MB
+    if value and value.size > limit_mb * 1024 * 1024:
+        raise serializers.ValidationError(f"Fichier audio trop volumineux ({limit_mb} Mo maximum).")
+    return value
 
 
 def display_name(user):
@@ -34,20 +45,36 @@ class MeetingSerializer(serializers.ModelSerializer):
     participants = ParticipantSerializer(many=True, read_only=True)
     owner_name = serializers.SerializerMethodField()
     is_owner = serializers.SerializerMethodField()
+    # The file has no public URL: it is read through GET /api/meetings/<id>/audio/ (audio_url).
+    audio_file = serializers.FileField(write_only=True, required=False, allow_null=True)
+    has_audio = serializers.SerializerMethodField()
+    audio_url = serializers.SerializerMethodField()
+    processing_label = serializers.CharField(source="get_processing_status_display", read_only=True)
+    is_processing = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Meeting
         fields = (
-            "id", "title", "date", "audio_file", "consent_confirmed", "transcript", "summary", "decisions",
-            "tasks", "status", "status_label", "created_at", "updated_at",
+            "id", "title", "date", "audio_file", "has_audio", "audio_url", "consent_confirmed", "transcript",
+            "summary", "topics", "key_points", "decisions", "tasks", "status", "status_label",
+            "processing_status", "processing_label", "processing_error", "is_processing", "created_at", "updated_at",
             "scheduled_at", "video_call", "is_call", "participant_emails", "participants",
             "owner_name", "is_owner",
         )
-        read_only_fields = ("summary", "decisions", "tasks", "status")
+        read_only_fields = (
+            "summary", "topics", "key_points", "decisions", "tasks", "status", "processing_status", "processing_error",
+        )
 
     def _user(self):
         request = self.context.get("request")
         return getattr(request, "user", None)
+
+    def get_has_audio(self, meeting):
+        return bool(meeting.audio_file)
+
+    def get_audio_url(self, meeting):
+        # Relative to the API base URL (the frontend adds the JWT, see api.blob()).
+        return f"/meetings/{meeting.id}/audio/" if meeting.audio_file else None
 
     def get_is_call(self, meeting):
         return bool(meeting.call_room)
@@ -73,9 +100,7 @@ class MeetingSerializer(serializers.ModelSerializer):
         return [users[e] for e in emails]
 
     def validate_audio_file(self, value):
-        if value and value.size > MAX_AUDIO_FILE:
-            raise serializers.ValidationError("Fichier audio trop volumineux (25 Mo maximum).")
-        return value
+        return validate_audio(value) if value else value
 
     def validate(self, attrs):
         has_audio = attrs["audio_file"] if "audio_file" in attrs else bool(self.instance and self.instance.audio_file)
@@ -117,9 +142,36 @@ class MeetingSerializer(serializers.ModelSerializer):
         return self._save_call(super().update(instance, validated_data), video_call, participants)
 
 
+class RecordingUploadSerializer(serializers.Serializer):
+    """Recording of a call, sent by the organizer's browser when the recording stops."""
+    session = serializers.IntegerField()
+    audio_file = serializers.FileField()
+
+    def validate_audio_file(self, value):
+        return validate_audio(value)
+
+
 # ------------------------------------------------------------------ AI responses
+def clean_items(raw, max_length):
+    """Short sentences from the AI: stripped, without blanks nor duplicates, MAX_AI_ITEMS at most."""
+    items = []
+    for item in raw:
+        text = " ".join(str(item).split())[:max_length]
+        if text and text not in items:
+            items.append(text)
+    return items[:MAX_AI_ITEMS]
+
+
 class SummaryResponseSerializer(serializers.Serializer):
     summary = serializers.CharField()
+    topics = serializers.ListField(child=serializers.CharField(allow_blank=True), allow_empty=True)
+    key_points = serializers.ListField(child=serializers.CharField(allow_blank=True), allow_empty=True)
+
+    def validate_topics(self, value):
+        return clean_items(value, 200)
+
+    def validate_key_points(self, value):
+        return clean_items(value, 500)
 
 
 class ExtractResponseSerializer(serializers.Serializer):

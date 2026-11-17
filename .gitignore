@@ -9,3 +9,4 @@ node_modules/
 .next/
 backend/closet/ml/dataset/*
 !backend/closet/ml/dataset/.gitkeep
+backend/private_media/

@@ -12,9 +12,10 @@ pillow>=10.0   # photos de la garde-robe (ImageField)
 channels==4.3.2
 daphne==4.2.3
 
-# Optionnel : transcription audio locale des réunions (POST /api/meetings/{id}/transcribe/).
-# Sans ce paquet, l'utilisateur colle le texte de la réunion.
-# faster-whisper>=1.0
+# Transcription automatique des enregistrements de réunion (US 29), en local sur le CPU.
+# Le modèle (WHISPER_MODEL, "base" par défaut) est téléchargé au premier usage.
+faster-whisper==1.2.1
+av>=14,<15   # faster-whisper 1.2.1 est incompatible avec PyAV 15+ (argument metadata_errors supprimé)
 
 # Optionnel : détection automatique des vêtements (module closet). Voir backend/closet/README.md
 # -r backend/closet/ml/requirements-ml.txt

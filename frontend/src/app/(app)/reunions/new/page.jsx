@@ -5,8 +5,9 @@ import { useState } from "react";
 import { Alert, Button, Card, Field, Input, PageHeader, ProgressBar, Textarea, btnClass, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 
-const MAX_AUDIO_MB = 25;
-const AUDIO_EXT = [".mp3", ".wav", ".m4a"];
+// Same limit as MEETING_MAX_AUDIO_MB on the server (100 MB by default).
+const MAX_AUDIO_MB = Number(process.env.NEXT_PUBLIC_MEETING_MAX_AUDIO_MB) || 100;
+const AUDIO_EXT = [".mp3", ".wav", ".m4a", ".webm", ".ogg"];
 const MAX_PARTICIPANTS = 20;
 const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 const today = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
@@ -163,7 +164,7 @@ export default function NewMeetingPage() {
             </div>
           ) : mode === "audio" ? (
             <div className="space-y-4 sm:col-span-2">
-              <Field label="Enregistrement (MP3, WAV, M4A)" hint={`${MAX_AUDIO_MB} Mo maximum.`}>
+              <Field label="Enregistrement (MP3, WAV, M4A, WEBM, OGG)" hint={`${MAX_AUDIO_MB} Mo maximum.`}>
                 <input type="file" accept={AUDIO_EXT.join(",")} onChange={pickFile}
                   className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-700" />
               </Field>

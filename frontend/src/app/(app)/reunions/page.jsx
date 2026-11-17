@@ -41,7 +41,7 @@ export default function MeetingsPage() {
                 </div>
                 <p className="mt-1 text-sm text-slate-500">
                   {m.scheduled_at ? fmtDateTime(m.scheduled_at) : fmtDay(m.date)}
-                  {m.audio_file && " · enregistrement audio"}
+                  {m.has_audio && " · enregistrement audio"}
                   {!m.is_owner && ` · organisé par ${m.owner_name}`}
                 </p>
                 {m.summary && <p className="mt-2 line-clamp-2 text-sm text-slate-600">{m.summary}</p>}

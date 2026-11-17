@@ -1,10 +1,13 @@
 "use client";
 // In-app audio/video call (WebRTC). Audio and video go directly between the browsers; the backend
 // WebSocket (meetings/consumers.py) only passes the setup messages. At most 4 people (mesh).
+// Recording (US 28, exigence 8.1): the organizer asks, every connected person accepts or refuses; once everybody
+// accepted, the organizer's browser mixes the audio of all participants (Web Audio API), records it
+// (MediaRecorder) and sends it to the server, which transcribes and analyses it in the background.
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Loading, PageHeader, btnClass, cx } from "@/components/ui";
+import { Alert, Button, Card, Loading, PageHeader, ProgressBar, btnClass, cx } from "@/components/ui";
 import { api, wsUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
@@ -12,6 +15,26 @@ const MAX_PEERS = 4;
 const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 const VIDEO = { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" };
 const KINDS = ["audio", "video"];
+const CLOSE_FULL = 4409;
+const CLOSE_CONSENT_REFUSED = 4451;
+// Same limit as MEETING_MAX_AUDIO_MB on the server (100 MB by default).
+const MAX_AUDIO_MB = Number(process.env.NEXT_PUBLIC_MEETING_MAX_AUDIO_MB) || 100;
+const NO_RECORDING = { state: "idle", session: null, recorder: null, accepted: [], waiting: [], reason: "", by: "" };
+
+// ------------------------------------------------------------------ recording
+const RECORDING_TYPES = [["audio/webm;codecs=opus", "webm"], ["audio/webm", "webm"], ["audio/ogg;codecs=opus", "ogg"], ["audio/ogg", "ogg"]];
+
+/** [mime type, file extension] the browser can record, or null. */
+function recordingType() {
+  if (typeof window === "undefined" || typeof MediaRecorder === "undefined" || !window.AudioContext) return null;
+  return RECORDING_TYPES.find(([type]) => MediaRecorder.isTypeSupported(type)) ?? null;
+}
+
+const RECORDING_END = {
+  refused: (by) => `${by} a refusé l'enregistrement : l'appel n'est pas enregistré.`,
+  stopped: () => "L'enregistrement est terminé.",
+  recorder_left: () => "L'organisateur a quitté l'appel : l'enregistrement s'est arrêté.",
+};
 
 // ------------------------------------------------------------------ camera and microphone
 function mediaErrorMessage(err) {
@@ -62,6 +85,8 @@ const PATHS = {
   cam: ["M3 7a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z", "M16 10l5-3v10l-5-3"],
   camOff: ["M8 5h6a2 2 0 0 1 2 2v3l5-3v10l-2-1.2", "M16 16v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2", "M3 3l18 18"],
   phone: ["M3 13.5c4.9-4.4 13.1-4.4 18 0l-2 3-3.5-1.2v-2.6a10 10 0 0 0-7 0v2.6L5 16.5l-2-3z"],
+  record: ["M12 6a6 6 0 1 0 0 12a6 6 0 1 0 0-12z"],
+  stop: ["M7 7h10v10H7z"],
 };
 function CallIcon({ name, className = "h-5 w-5" }) {
   return (
@@ -113,6 +138,48 @@ function Tile({ stream, name, mic, cam, self = false, status, className }) {
   );
 }
 
+/** "Recording" indicator, seen by everybody in the call. */
+function RecordingBadge() {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-2.5 py-1 text-xs font-semibold text-white" role="status">
+      <span className="h-2 w-2 animate-pulse rounded-full bg-white" aria-hidden="true" />
+      Enregistrement en cours
+    </span>
+  );
+}
+
+/** Sending the recording to the server; on failure the file can be sent again or downloaded. */
+function UploadPanel({ upload, onRetry, meetingHref }) {
+  const [href, setHref] = useState("");
+  useEffect(() => {
+    if (!upload.error || !upload.file) return undefined;
+    const url = URL.createObjectURL(upload.file);
+    setHref(url);
+    return () => URL.revokeObjectURL(url);
+  }, [upload.error, upload.file]);
+
+  if (!upload.error) {
+    return (
+      <Card className="space-y-2">
+        <p className="text-sm font-medium text-navy-900">Envoi de l'enregistrement… {upload.progress ?? 0} %</p>
+        <ProgressBar value={upload.progress ?? 0} tone="blue" />
+        <p className="text-xs text-slate-500">Gardez cette page ouverte. La transcription et l'analyse démarreront ensuite automatiquement.</p>
+      </Card>
+    );
+  }
+  const tooBig = upload.file && upload.file.size > MAX_AUDIO_MB * 1024 * 1024;
+  return (
+    <Alert>
+      <span className="block">{upload.error}</span>
+      <span className="mt-2 flex flex-wrap gap-2">
+        {!tooBig && <Button size="sm" variant="secondary" onClick={onRetry}>Réessayer l'envoi</Button>}
+        {href && <a href={href} download={upload.file.name} className={btnClass("secondary", "sm")}>Télécharger l'enregistrement</a>}
+        <Link href={meetingHref} className={btnClass("ghost", "sm")}>Aller à la réunion</Link>
+      </span>
+    </Alert>
+  );
+}
+
 const CONNECTION_STATUS = {
   new: "Connexion…",
   connecting: "Connexion…",
@@ -140,6 +207,11 @@ export default function MeetingCallPage() {
   const [offline, setOffline] = useState(false);
   const [me, setMe] = useState(null);
   const [peers, setPeers] = useState({}); // id -> {id, name, mic, cam, stream, conn}
+  const [recording, setRecording] = useState(NO_RECORDING); // state sent by the server
+  const [answered, setAnswered] = useState(null); // session this browser answered
+  const [recNotice, setRecNotice] = useState("");
+  const [upload, setUpload] = useState(null); // {progress, error, file, session} while/after sending the recording
+  const [canRecord, setCanRecord] = useState(false);
 
   const localRef = useRef(null); // MediaStream sent to the others
   const wsRef = useRef(null);
@@ -150,6 +222,9 @@ export default function MeetingCallPage() {
   const leavingRef = useRef(false);
   const unmountedRef = useRef(false);
   const previewTokenRef = useRef(0);
+  const meRef = useRef(null);
+  const audioCtxRef = useRef(null); // created on the organizer's click (browsers start audio only after a gesture)
+  const recorderRef = useRef(null); // {recorder, chunks, sources: Map(track id -> node), dest, session, type, ext}
 
   // ---------------------------------------------------------------- local media
   const localTrack = (kind) => localRef.current?.getTracks().find((t) => t.kind === kind && t.readyState === "live");
@@ -247,6 +322,111 @@ export default function MeetingCallPage() {
     setDeviceBusy(false);
   }
 
+  // ---------------------------------------------------------------- recording (organizer's browser)
+  /** Audio tracks to record: my microphone and the sound of every remote participant. */
+  function audioTracks() {
+    const tracks = [];
+    const mine = localTrack("audio");
+    if (mine) tracks.push(mine);
+    pcsRef.current.forEach(({ remote }) => remote.getAudioTracks().forEach((t) => t.readyState === "live" && tracks.push(t)));
+    return tracks;
+  }
+
+  /** Keep the mix in line with who is in the call (people join and leave, the microphone is switched on). */
+  function syncMix() {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    const ctx = audioCtxRef.current;
+    const live = new Set();
+    for (const track of audioTracks()) {
+      live.add(track.id);
+      if (!rec.sources.has(track.id)) {
+        const node = ctx.createMediaStreamSource(new MediaStream([track]));
+        node.connect(rec.dest);
+        rec.sources.set(track.id, node);
+      }
+    }
+    rec.sources.forEach((node, trackId) => {
+      if (!live.has(trackId)) {
+        node.disconnect();
+        rec.sources.delete(trackId);
+      }
+    });
+  }
+
+  function requestRecording() {
+    setRecNotice("");
+    // The AudioContext is created during the click: created later, browsers would keep it silent.
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") audioCtxRef.current = new AudioContext();
+    audioCtxRef.current.resume().catch(() => {});
+    send({ type: "recording-request" });
+  }
+
+  function startRecorder(session) {
+    const type = recordingType();
+    if (!type || recorderRef.current) return;
+    const ctx = audioCtxRef.current ?? new AudioContext();
+    audioCtxRef.current = ctx;
+    ctx.resume().catch(() => {});
+    const dest = ctx.createMediaStreamDestination();
+    const recorder = new MediaRecorder(dest.stream, { mimeType: type[0], audioBitsPerSecond: 64000 });
+    const rec = { recorder, chunks: [], sources: new Map(), dest, session, type: type[0], ext: type[1] };
+    recorder.ondataavailable = (e) => e.data.size > 0 && rec.chunks.push(e.data);
+    recorderRef.current = rec;
+    syncMix();
+    recorder.start(1000); // a chunk every second: little is lost if the tab crashes
+  }
+
+  /** Stop the recorder (synchronously) and resolve with the recorded file, or null. */
+  function stopRecorder() {
+    const rec = recorderRef.current;
+    if (!rec) return Promise.resolve(null);
+    recorderRef.current = null;
+    return new Promise((resolve) => {
+      rec.recorder.onstop = () => {
+        rec.sources.forEach((node) => node.disconnect());
+        const blob = new Blob(rec.chunks, { type: rec.type });
+        resolve({ file: new File([blob], `appel-${id}.${rec.ext}`, { type: rec.type }), session: rec.session });
+      };
+      if (rec.recorder.state !== "inactive") rec.recorder.stop();
+      else rec.recorder.onstop();
+    });
+  }
+
+  async function sendRecording(result) {
+    if (!result) return false;
+    const { file, session } = result;
+    if (file.size > MAX_AUDIO_MB * 1024 * 1024) {
+      setUpload({ ...result, progress: null, error: `L'enregistrement dépasse ${MAX_AUDIO_MB} Mo : il ne peut pas être envoyé. Téléchargez-le pour le garder.` });
+      return false;
+    }
+    setUpload({ ...result, progress: 0, error: "" });
+    const form = new FormData();
+    form.append("session", String(session));
+    form.append("audio_file", file);
+    try {
+      await api.upload(`/meetings/${id}/recording/`, form, (progress) => setUpload((u) => u && { ...u, progress }));
+      setUpload(null);
+      setRecNotice("Enregistrement envoyé : la transcription et l'analyse ont démarré. Les résultats apparaîtront sur la page de la réunion.");
+      return true;
+    } catch (err) {
+      setUpload({ ...result, progress: null, error: err.message });
+      return false;
+    }
+  }
+
+  /** Organizer: stop the recording, tell the others, send the file. */
+  async function finishRecording() {
+    const pending = stopRecorder();
+    send({ type: "recording-stop" });
+    return sendRecording(await pending);
+  }
+
+  function answerRecording(accepted) {
+    setAnswered(recording.session);
+    send({ type: "recording-consent", accepted });
+  }
+
   // ---------------------------------------------------------------- signaling
   function send(message) {
     const ws = wsRef.current;
@@ -316,8 +496,20 @@ export default function MeetingCallPage() {
 
   async function handle(msg) {
     switch (msg.type) {
-      case "peers":
+      case "consent-required":
+        // A recording is running: accept it to join the call, or leave.
+        meRef.current = msg.you;
         setMe(msg.you);
+        setRecording(msg.recording);
+        setPhase("consent");
+        break;
+      case "recording":
+        handleRecording(msg);
+        break;
+      case "peers":
+        meRef.current = msg.you;
+        setMe(msg.you);
+        setRecording(msg.recording ?? NO_RECORDING);
         setPeers(Object.fromEntries(msg.peers.map((p) => [p.id, { ...p, conn: "new" }])));
         setPhase("call");
         // The newcomer calls the people already there.
@@ -366,9 +558,23 @@ export default function MeetingCallPage() {
         break;
       }
       case "error":
-        if (msg.code !== "call_full") console.warn("Appel :", msg.detail);
+        if (["forbidden", "recording_busy"].includes(msg.code)) setRecNotice(msg.detail);
+        else if (!["call_full", "consent_refused"].includes(msg.code)) console.warn("Appel :", msg.detail);
         break;
       default:
+    }
+  }
+
+  function handleRecording(state) {
+    setRecording(state);
+    const iAmRecorder = state.recorder && state.recorder === meRef.current?.id;
+    if (state.state === "recording" && iAmRecorder) startRecorder(state.session);
+    if (state.state === "idle") {
+      if (recorderRef.current) finishRecording(); // stopped by the server (should not happen while I record)
+      const end = RECORDING_END[state.reason];
+      if (end) setRecNotice(end(state.by));
+    } else {
+      setRecNotice("");
     }
   }
 
@@ -398,17 +604,23 @@ export default function MeetingCallPage() {
     ws.onmessage = (event) => {
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
-      if (msg.type === "error" && msg.code === "call_full") refusal = msg.detail;
+      if (msg.type === "error" && ["call_full", "consent_refused"].includes(msg.code)) refusal = msg.detail;
       queueRef.current = queueRef.current.then(() => handle(msg)).catch((err) => console.error("Appel :", err));
     };
     ws.onclose = (event) => {
       if (wsRef.current !== ws) return; // closed on purpose
       wsRef.current = null;
+      // The connection to the server is lost while I record: keep and send what was recorded.
+      if (recorderRef.current) stopRecorder().then(sendRecording);
       closeAllPeers();
+      meRef.current = null;
       setMe(null);
+      setRecording(NO_RECORDING);
       if (leavingRef.current) return;
       setPhase("lobby");
-      if (refusal || event.code === 4409) {
+      if (event.code === CLOSE_CONSENT_REFUSED) {
+        setCallError(refusal || "Vous avez refusé l'enregistrement en cours : vous pourrez rejoindre l'appel quand il sera terminé.");
+      } else if (refusal || event.code === CLOSE_FULL) {
         setCallError(refusal || `L'appel est complet (${MAX_PEERS} participants maximum). Réessayez quand quelqu'un sera parti.`);
       } else if (!navigator.onLine) {
         setCallError("Vous êtes hors ligne : l'appel a été interrompu. Vérifiez votre connexion, puis rejoignez à nouveau l'appel.");
@@ -434,9 +646,20 @@ export default function MeetingCallPage() {
     stopLocal();
   }
 
-  function hangUp() {
+  async function hangUp() {
+    // The organizer hangs up while recording: the recording stops and is sent before leaving the page.
+    const pending = recorderRef.current ? stopRecorder() : null;
+    if (pending) send({ type: "recording-stop" });
     teardown();
+    if (pending) {
+      setPhase("sending");
+      if (!(await sendRecording(await pending))) return; // error shown, with retry and download
+    }
     router.push(`/reunions/${id}`);
+  }
+
+  async function retryUpload() {
+    if (await sendRecording(upload) && phase === "sending") router.push(`/reunions/${id}`);
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -454,8 +677,25 @@ export default function MeetingCallPage() {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("pagehide", teardown);
       teardown();
+      recorderRef.current = null;
+      audioCtxRef.current?.close().catch(() => {});
     };
   }, []);
+
+  useEffect(() => { setCanRecord(!!recordingType()); }, []);
+
+  // The mix follows the people in the call and my microphone.
+  useEffect(() => { syncMix(); }, [peers, localStream]);
+
+  // Warn before closing the tab while recording or sending the recording.
+  const busyRecording = recording.state === "recording" && recording.recorder === me?.id;
+  const sending = upload && upload.progress !== null;
+  useEffect(() => {
+    if (!busyRecording && !sending) return undefined;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [busyRecording, sending]);
 
   useEffect(() => {
     api.get(`/meetings/${id}/`).then(setMeeting).catch((err) => setLoadError(err.message));
@@ -483,6 +723,39 @@ export default function MeetingCallPage() {
     </>
   );
 
+  const uploadPanel = upload && (
+    <UploadPanel upload={upload} onRetry={retryUpload} meetingHref={`/reunions/${id}`} />
+  );
+
+  if (phase === "sending") {
+    return (
+      <>
+        <PageHeader title={meeting.title} subtitle="Appel terminé." actions={back} />
+        <div className="mx-auto max-w-xl">{uploadPanel || <Loading />}</div>
+      </>
+    );
+  }
+
+  if (phase === "consent") {
+    return (
+      <>
+        <PageHeader title={meeting.title} subtitle="Un enregistrement est en cours dans cet appel." actions={back} />
+        <Card className="mx-auto max-w-xl space-y-4">
+          <RecordingBadge />
+          <p className="text-sm text-slate-700">
+            L'organisateur enregistre cet appel avec l'accord de tous les participants. L'audio sera transcrit et analysé
+            par l'IA (résumé, décisions, tâches). Pour rejoindre l'appel, vous devez accepter l'enregistrement.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="success" onClick={() => answerRecording(true)} disabled={answered === recording.session}>Accepter et rejoindre</Button>
+            <Button variant="danger" onClick={() => answerRecording(false)} disabled={answered === recording.session}>Refuser</Button>
+          </div>
+          <p className="text-xs text-slate-500">Si vous refusez, vous pourrez rejoindre l'appel une fois l'enregistrement terminé.</p>
+        </Card>
+      </>
+    );
+  }
+
   if (phase !== "call") {
     const hasMedia = !!localStream && localStream.getTracks().length > 0;
     return (
@@ -505,6 +778,7 @@ export default function MeetingCallPage() {
             <Alert>{mediaError}</Alert>
             <Alert tone="info">{notice}</Alert>
             <Alert>{callError}</Alert>
+            {uploadPanel}
             {offline && <Alert>Vous êtes hors ligne. Vérifiez votre connexion internet.</Alert>}
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="success" onClick={join} loading={phase === "joining"} disabled={!previewReady || offline}>
@@ -514,7 +788,8 @@ export default function MeetingCallPage() {
             </div>
             <p className="text-xs text-slate-500">
               Appel privé réservé à l'organisateur et aux invités ({MAX_PEERS} personnes maximum). Le son et l'image
-              passent directement entre les participants et ne sont pas enregistrés.
+              passent directement entre les participants. L'appel n'est enregistré que si tous les participants
+              connectés l'acceptent.
             </p>
           </Card>
         </div>
@@ -525,14 +800,54 @@ export default function MeetingCallPage() {
   const others = Object.values(peers);
   const count = others.length + 1;
   const grid = count === 1 ? "grid-cols-1" : count === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2";
+  const isOrganizer = !!me?.organizer;
+  // A participant who has not answered the current request yet.
+  const mustAnswer = recording.state === "pending" && !isOrganizer && me
+    && !recording.accepted.includes(me.user_id) && answered !== recording.session;
+  const recordControl = isOrganizer && (
+    recording.state === "idle" ? (
+      <ControlButton label={canRecord ? "Enregistrer l'appel" : "Ce navigateur ne permet pas d'enregistrer l'appel"}
+        icon="record" disabled={!canRecord || !!sending} onClick={requestRecording} />
+    ) : (
+      <ControlButton label={recording.state === "recording" ? "Arrêter l'enregistrement" : "Annuler la demande d'enregistrement"}
+        icon="stop" danger={recording.state === "recording"} onClick={finishRecording} />
+    )
+  );
   return (
     <div className="flex min-h-[calc(100dvh-10rem)] flex-col gap-3 rounded-2xl bg-navy-950 p-2 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-white">
         <h1 className="truncate font-display text-base font-semibold sm:text-lg">{meeting.title}</h1>
-        <span className="text-xs text-slate-300 sm:text-sm">{count} / {MAX_PEERS} participants</span>
+        <span className="flex items-center gap-3">
+          {recording.state === "recording" && <RecordingBadge />}
+          <span className="text-xs text-slate-300 sm:text-sm">{count} / {MAX_PEERS} participants</span>
+        </span>
       </div>
+      {recording.state === "pending" && (
+        <Alert tone="info">
+          Demande d'enregistrement : l'enregistrement démarrera quand tous les participants connectés l'auront accepté.
+          {recording.waiting.length > 0 && <> En attente de : {recording.waiting.join(", ")}.</>}
+        </Alert>
+      )}
+      <Alert tone="info">{recNotice}</Alert>
+      {uploadPanel}
       {offline && <Alert>Vous êtes hors ligne : l'image et le son des autres peuvent être coupés.</Alert>}
       <Alert>{mediaError}</Alert>
+      {mustAnswer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+          <Card className="w-full max-w-md space-y-4">
+            <h2 id="consent-title" className="font-display text-lg font-semibold">Enregistrer l'appel ?</h2>
+            <p className="text-sm text-slate-700">
+              L'organisateur souhaite enregistrer l'audio de cet appel. L'enregistrement sera transcrit et analysé par
+              l'IA (résumé, sujets, décisions, tâches) et visible par les participants de la réunion.
+            </p>
+            <p className="text-sm text-slate-500">Il ne démarrera que si tous les participants connectés acceptent. Votre réponse est enregistrée.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="success" onClick={() => answerRecording(true)}>J'accepte</Button>
+              <Button variant="danger" onClick={() => answerRecording(false)}>Je refuse</Button>
+            </div>
+          </Card>
+        </div>
+      )}
       <div className={cx("grid flex-1 content-center gap-2 sm:gap-3", grid)}>
         <Tile stream={localStream} name={myName} mic={micOn} cam={camOn} self
           className={cx(count === 1 ? "mx-auto aspect-[4/3] w-full max-w-3xl sm:aspect-video" : "aspect-[4/3] sm:aspect-video")} />
@@ -544,6 +859,7 @@ export default function MeetingCallPage() {
       {count === 1 && <p className="text-center text-sm text-slate-300">En attente des autres participants…</p>}
       <div className="flex justify-center gap-3 pb-1 pt-1 sm:gap-4">
         {controls}
+        {recordControl}
         <ControlButton label="Raccrocher" icon="phone" danger onClick={hangUp} />
       </div>
     </div>
