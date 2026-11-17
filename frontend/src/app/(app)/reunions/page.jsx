@@ -46,10 +46,10 @@ export default function MeetingsPage() {
                 </p>
                 {m.summary && <p className="mt-2 line-clamp-2 text-sm text-slate-600">{m.summary}</p>}
                 {m.tasks.length > 0 && <p className="mt-3 text-sm text-slate-500">{m.tasks.length} tâche{m.tasks.length > 1 && "s"}</p>}
-                {m.call_url && (
-                  <a href={m.call_url} target="_blank" rel="noopener noreferrer" className={btnClass("success", "sm", "relative z-10 mt-3")}>
-                    Rejoindre
-                  </a>
+                {m.is_call && (
+                  <Link href={`/reunions/${m.id}/appel`} className={btnClass("success", "sm", "relative z-10 mt-3")}>
+                    Rejoindre l'appel
+                  </Link>
                 )}
               </Card>
             );

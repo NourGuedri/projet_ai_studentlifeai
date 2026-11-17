@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -12,6 +13,8 @@ DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
+    "daphne",  # must come first: its runserver serves HTTP and WebSocket
+    "channels",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -63,6 +66,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": {
@@ -121,5 +125,9 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "StudentLife AI <no-reply@studentlife.local>")
 
-# Video calls of the Meetings module: a Jitsi link opened in a new tab.
-JITSI_BASE_URL = os.getenv("JITSI_BASE_URL", "https://meet.jit.si").rstrip("/")
+# Video calls of the Meetings module: WebRTC inside the app, signaling over WebSocket (Django Channels).
+# In-memory layer: one server process only (enough for SQLite / development).
+CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+# STUN/TURN servers given to the browsers, as JSON, e.g.
+# WEBRTC_ICE_SERVERS=[{"urls": "stun:stun.example.org:3478"}]. Empty list: same machine / local network only.
+WEBRTC_ICE_SERVERS = json.loads(os.getenv("WEBRTC_ICE_SERVERS", "") or "[]")

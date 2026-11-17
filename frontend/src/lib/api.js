@@ -1,4 +1,11 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+/** Absolute WebSocket URL: NEXT_PUBLIC_WS_URL, else derived from the API URL (http→ws, without /api). */
+export function wsUrl(path) {
+  let base = process.env.NEXT_PUBLIC_WS_URL || BASE.replace(/\/api\/?$/, "");
+  if ((!base || base.startsWith("/")) && typeof window !== "undefined") base = window.location.origin + base; // relative API URL
+  return base.replace(/^http/, "ws").replace(/\/$/, "") + path;
+}
 const ACCESS = "sl_access";
 const REFRESH = "sl_refresh";
 

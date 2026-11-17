@@ -1,16 +1,24 @@
 import shutil
 import sys
 import tempfile
+import time
 from unittest.mock import patch
+
+from channels.testing import WebsocketCommunicator
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import override_settings
+from django.conf import settings
+from django.test import TransactionTestCase, override_settings
 from rest_framework.test import APITestCase
 
 from common import ai
 from notifications.models import Notification
 
+from config.asgi import application
+
+from . import consumers
+from .calls import make_ticket
 from .models import Meeting
 
 INVITATION = "Invitation à une réunion"
@@ -184,8 +192,7 @@ class MeetingTests(APITestCase):
         self.assertEqual(response.data["status"], Meeting.TRANSCRIBED)
 
 
-# ------------------------------------------------------------------ video calls (Jitsi)
-@override_settings(JITSI_BASE_URL="https://meet.example.org")
+# ------------------------------------------------------------------ video calls (planning)
 class VideoCallTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -211,7 +218,7 @@ class VideoCallTests(APITestCase):
         meeting = Meeting.objects.get(pk=response.data["id"])
         self.assertEqual(set(meeting.participants.all()), {self.guest, self.guest2})
         self.assertRegex(meeting.call_room, r"^StudentLife-[A-Za-z0-9]{20,}$")
-        self.assertEqual(response.data["call_url"], f"https://meet.example.org/{meeting.call_room}")
+        self.assertNotIn("call_url", response.data)  # no external call service any more
         self.assertTrue(response.data["is_call"])
         self.assertTrue(response.data["is_owner"])
         self.assertEqual(response.data["owner_name"], "Sara Ben Ali")
@@ -226,17 +233,17 @@ class VideoCallTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("scheduled_at", response.data)
 
-    def test_call_links_are_unique(self):
-        first = self.plan_call().data
-        second = self.plan_call().data
-        self.assertTrue(first["call_url"])
-        self.assertNotEqual(first["call_url"], second["call_url"])
+    def test_call_rooms_are_unique(self):
+        first = Meeting.objects.get(pk=self.plan_call().data["id"])
+        second = Meeting.objects.get(pk=self.plan_call().data["id"])
+        self.assertTrue(first.call_room)
+        self.assertNotEqual(first.call_room, second.call_room)
 
-    def test_regular_meeting_has_no_call_link(self):
+    def test_regular_meeting_is_not_a_call(self):
         response = self.client.post("/api/meetings/", {"title": "Notes", "transcript": TRANSCRIPT}, format="json")
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.data["call_url"], "")
         self.assertFalse(response.data["is_call"])
+        self.assertEqual(Meeting.objects.get(pk=response.data["id"]).call_room, "")
 
     def test_invited_participants_are_notified(self):
         meeting_id = self.plan_call().data["id"]
@@ -267,7 +274,7 @@ class VideoCallTests(APITestCase):
         detail = self.client.get(f"/api/meetings/{meeting_id}/")
         self.assertEqual(detail.status_code, 200)
         self.assertFalse(detail.data["is_owner"])
-        self.assertTrue(detail.data["call_url"])
+        self.assertTrue(detail.data["is_call"])
 
         response = self.client.patch(f"/api/meetings/{meeting_id}/", {"title": "Modifié"}, format="json")
         self.assertEqual(response.status_code, 403)
@@ -301,3 +308,161 @@ class VideoCallTests(APITestCase):
         self.client.force_authenticate(self.outsider)
         self.assertEqual(self.client.get(f"/api/meetings/{meeting_id}/").status_code, 404)
         self.assertEqual(self.client.get("/api/meetings/").data, [])
+
+
+# ------------------------------------------------------------------ in-app calls: ticket and WebSocket signaling
+ICE_SERVERS = [{"urls": "stun:stun.example.org:3478"}]
+
+
+@override_settings(WEBRTC_ICE_SERVERS=ICE_SERVERS)
+class CallTicketTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(email="orga@example.com", password=None)
+        self.guest = user_model.objects.create_user(email="invite@example.com", password=None)
+        self.outsider = user_model.objects.create_user(email="externe@example.com", password=None)
+        self.call = Meeting.objects.create(owner=self.owner, title="Appel", call_room="StudentLife-room1")
+        self.call.participants.add(self.guest)
+        self.url = f"/api/meetings/{self.call.id}/call-ticket/"
+
+    def test_organizer_and_participant_get_a_ticket(self):
+        for user in (self.owner, self.guest):
+            self.client.force_authenticate(user)
+            response = self.client.post(self.url)
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertTrue(response.data["ticket"])
+            self.assertEqual(response.data["ice_servers"], ICE_SERVERS)
+
+    def test_uninvited_user_gets_404(self):
+        self.client.force_authenticate(self.outsider)
+        self.assertEqual(self.client.post(self.url).status_code, 404)
+
+    def test_authentication_is_required(self):
+        self.assertEqual(self.client.post(self.url).status_code, 401)
+
+    def test_meeting_without_call_has_no_ticket(self):
+        notes = Meeting.objects.create(owner=self.owner, title="Notes")
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.post(f"/api/meetings/{notes.id}/call-ticket/").status_code, 400)
+
+
+# The consumer reads the database through database_sync_to_async, which closes the connection when it is inside
+# the transaction that TestCase wraps around each test: TransactionTestCase is required here.
+class CallSignalingTests(TransactionTestCase):
+    ORIGIN = settings.CORS_ALLOWED_ORIGINS[0]
+
+    def setUp(self):
+        consumers.ROOMS.clear()
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(
+            email="orga@example.com", password=None, first_name="Sara", last_name="Ben Ali",
+        )
+        self.guests = [user_model.objects.create_user(email=f"invite{i}@example.com", password=None) for i in range(4)]
+        self.guest = self.guests[0]
+        self.outsider = user_model.objects.create_user(email="externe@example.com", password=None)
+        self.call = Meeting.objects.create(owner=self.owner, title="Appel", call_room="StudentLife-room1")
+        self.call.participants.set(self.guests)
+        self.other_call = Meeting.objects.create(owner=self.owner, title="Autre appel", call_room="StudentLife-room2")
+        self.open = []
+
+    async def connect(self, user=None, ticket=None, meeting=None, origin=None):
+        meeting = meeting or self.call
+        if ticket is None and user is not None:
+            ticket = make_ticket(user, meeting)
+        query = f"?ticket={ticket}" if ticket else ""
+        communicator = WebsocketCommunicator(
+            application, f"/ws/meetings/{meeting.id}/call/{query}",
+            headers=[(b"origin", (origin or self.ORIGIN).encode()), (b"host", b"localhost:8000")],
+        )
+        connected, code = await communicator.connect()
+        if connected:
+            self.open.append(communicator)
+        return communicator, connected, code
+
+    async def join(self, user):
+        """Connect and return (communicator, my peer id), after reading the welcome message."""
+        communicator, connected, _code = await self.connect(user)
+        self.assertTrue(connected)
+        welcome = await communicator.receive_json_from()
+        self.assertEqual(welcome["type"], "peers")
+        return communicator, welcome["you"]["id"]
+
+    async def close_all(self):
+        for communicator in self.open:
+            await communicator.disconnect()
+        self.open = []
+
+    async def test_refused_without_ticket(self):
+        _c, connected, _code = await self.connect()
+        self.assertFalse(connected)
+        _c, connected, _code = await self.connect(ticket="faux-ticket")
+        self.assertFalse(connected)
+
+    async def test_refused_with_expired_ticket(self):
+        with patch("django.core.signing.time.time", return_value=time.time() - 120):
+            ticket = make_ticket(self.owner, self.call)
+        _c, connected, _code = await self.connect(ticket=ticket)
+        self.assertFalse(connected)
+
+    async def test_refused_with_ticket_of_another_meeting(self):
+        ticket = make_ticket(self.owner, self.other_call)
+        _c, connected, _code = await self.connect(ticket=ticket)
+        self.assertFalse(connected)
+
+    async def test_refused_when_not_invited(self):
+        _c, connected, _code = await self.connect(self.outsider)
+        self.assertFalse(connected)
+
+    async def test_refused_from_an_unknown_origin(self):
+        _c, connected, _code = await self.connect(self.owner, origin="https://evil.example.com")
+        self.assertFalse(connected)
+
+    async def test_organizer_and_guest_are_accepted(self):
+        owner, owner_id = await self.join(self.owner)
+        guest, connected, _code = await self.connect(self.guest)
+        self.assertTrue(connected)
+        welcome = await guest.receive_json_from()
+        self.assertEqual([(p["id"], p["name"]) for p in welcome["peers"]], [(owner_id, "Sara Ben Ali")])
+        joined = await owner.receive_json_from()
+        self.assertEqual(joined["type"], "join")
+        self.assertEqual(joined["peer"]["id"], welcome["you"]["id"])
+        self.assertEqual(joined["peer"]["name"], "invite0@example.com")
+        await self.close_all()
+
+    async def test_offer_is_relayed_to_the_recipient_only(self):
+        owner, owner_id = await self.join(self.owner)
+        guest, _guest_id = await self.join(self.guests[0])
+        guest2, guest2_id = await self.join(self.guests[1])
+        await owner.receive_json_from()  # join of guest
+        await owner.receive_json_from()  # join of guest2
+        await guest.receive_json_from()  # join of guest2
+
+        await guest2.send_json_to({"type": "offer", "to": owner_id, "sdp": "v=0 fake-sdp"})
+        offer = await owner.receive_json_from()
+        self.assertEqual(offer, {"type": "offer", "from": guest2_id, "name": "invite1@example.com", "sdp": "v=0 fake-sdp"})
+        self.assertTrue(await guest.receive_nothing())
+        self.assertTrue(await guest2.receive_nothing())
+        await self.close_all()
+
+    async def test_media_state_and_leave_are_broadcast(self):
+        owner, _owner_id = await self.join(self.owner)
+        guest, guest_id = await self.join(self.guest)
+        await owner.receive_json_from()  # join
+        await guest.send_json_to({"type": "media", "mic": False, "cam": True})
+        self.assertEqual(await owner.receive_json_from(), {"type": "media", "id": guest_id, "mic": False, "cam": True})
+        await guest.send_json_to({"type": "leave"})
+        self.assertEqual(await owner.receive_json_from(), {"type": "leave", "id": guest_id})
+        await self.close_all()
+        self.assertEqual(consumers.ROOMS, {})
+
+    async def test_fifth_person_is_refused(self):
+        for user in [self.owner, *self.guests[:3]]:
+            await self.join(user)
+        fifth, connected, _code = await self.connect(self.guests[3])
+        self.assertTrue(connected)  # accepted only to explain the refusal
+        error = await fifth.receive_json_from()
+        self.assertEqual(error["code"], "call_full")
+        closed = await fifth.receive_output()
+        self.assertEqual(closed, {"type": "websocket.close", "code": consumers.CLOSE_FULL})
+        self.assertEqual(len(consumers.ROOMS[self.call.id]), 4)
+        await self.close_all()

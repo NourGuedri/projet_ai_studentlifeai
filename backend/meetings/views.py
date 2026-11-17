@@ -1,8 +1,10 @@
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.generics import get_object_or_404
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
@@ -10,6 +12,7 @@ from common import ai
 from notifications.services import notify_many
 
 from . import services
+from .calls import make_ticket
 from .models import Meeting
 from .serializers import MeetingSerializer, display_name
 
@@ -127,3 +130,12 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting.status = Meeting.ANALYZED
         meeting.save()
         return Response(self.get_serializer(meeting).data)
+
+    @action(detail=True, methods=["post"], url_path="call-ticket")
+    def call_ticket(self, request, pk=None):
+        """Short-lived ticket to open the call WebSocket (organizer and participants, like reading)."""
+        # Not get_object(): it reserves POST to the organizer, while every participant may join the call.
+        meeting = get_object_or_404(self.get_queryset(), pk=pk)
+        if not meeting.call_room:
+            return Response({"detail": "Cette réunion n'est pas un appel audio/vidéo."}, status=400)
+        return Response({"ticket": make_ticket(request.user, meeting), "ice_servers": settings.WEBRTC_ICE_SERVERS})

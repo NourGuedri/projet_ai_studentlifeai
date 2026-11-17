@@ -25,10 +25,9 @@ class ParticipantSerializer(serializers.Serializer):
 
 class MeetingSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display", read_only=True)
-    # Video call: "video_call": true gives the meeting a Jitsi room.
+    # Video call: "video_call": true makes the meeting an in-app call (it gets an internal room id).
     video_call = serializers.BooleanField(write_only=True, required=False, default=False)
     is_call = serializers.SerializerMethodField()
-    call_url = serializers.CharField(read_only=True)
     participant_emails = serializers.ListField(
         child=serializers.EmailField(), write_only=True, required=False, allow_empty=True,
     )
@@ -41,7 +40,7 @@ class MeetingSerializer(serializers.ModelSerializer):
         fields = (
             "id", "title", "date", "audio_file", "consent_confirmed", "transcript", "summary", "decisions",
             "tasks", "status", "status_label", "created_at", "updated_at",
-            "scheduled_at", "video_call", "is_call", "call_url", "participant_emails", "participants",
+            "scheduled_at", "video_call", "is_call", "participant_emails", "participants",
             "owner_name", "is_owner",
         )
         read_only_fields = ("summary", "decisions", "tasks", "status")

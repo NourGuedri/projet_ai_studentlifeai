@@ -15,7 +15,7 @@ AUDIO_EXTENSIONS = ["mp3", "wav", "m4a"]
 
 
 def new_call_room():
-    """Unpredictable Jitsi room name, letters and digits only."""
+    """Unpredictable internal room id of a call, letters and digits only."""
     token = "".join(c for c in secrets.token_urlsafe(24) if c.isalnum())
     return f"StudentLife-{token}"
 
@@ -48,7 +48,7 @@ class Meeting(models.Model):
     decisions = models.JSONField(default=list, blank=True)
     tasks = models.JSONField(default=list, blank=True)  # [{"title", "assignee", "due_date"}], see common/tasks.py
     status = models.CharField(max_length=12, choices=STATUSES, default=DRAFT)
-    # Video call (Jitsi): the room exists only for meetings planned as a call.
+    # In-app audio/video call (WebRTC, see consumers.py): the room exists only for meetings planned as a call.
     scheduled_at = models.DateTimeField(null=True, blank=True)
     participants = models.ManyToManyField(User, related_name="invited_meetings", blank=True)
     call_room = models.CharField(max_length=80, blank=True, default="")
@@ -66,14 +66,8 @@ class Meeting(models.Model):
     def __str__(self):
         return self.title
 
-    @property
-    def call_url(self):
-        if not self.call_room:
-            return ""
-        return f"{settings.JITSI_BASE_URL.rstrip('/')}/{self.call_room}"
-
     def ensure_call_room(self):
-        """Give the meeting a Jitsi room if it has none yet (not saved)."""
+        """Give the meeting a call room if it has none yet (not saved)."""
         if not self.call_room:
             room = new_call_room()
             while Meeting.objects.filter(call_room=room).exists():

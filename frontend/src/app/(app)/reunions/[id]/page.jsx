@@ -73,8 +73,8 @@ export default function MeetingDetailPage() {
       <PageHeader title={meeting.title} subtitle={`${when} · Organisé par ${isOwner ? "vous" : meeting.owner_name}`}
         actions={<>
           <Link href="/reunions" className={btnClass("ghost")}>Retour</Link>
-          {meeting.call_url && (
-            <a href={meeting.call_url} target="_blank" rel="noopener noreferrer" className={btnClass("success")}>Rejoindre l'appel</a>
+          {meeting.is_call && (
+            <Link href={`/reunions/${meeting.id}/appel`} className={btnClass("success")}>Rejoindre l'appel</Link>
           )}
           {isOwner && <Button variant="danger" onClick={remove}>Supprimer</Button>}
         </>} />
@@ -101,8 +101,10 @@ export default function MeetingDetailPage() {
               ))}
             </ul>
             {meeting.participants.length === 0 && <p className="mt-2 text-sm text-slate-500">Aucun participant invité.</p>}
-            {meeting.call_url && (
-              <p className="mt-3 text-sm text-slate-500">L'appel s'ouvre dans Jitsi Meet, dans un nouvel onglet.</p>
+            {meeting.is_call && (
+              <p className="mt-3 text-sm text-slate-500">
+                L'appel audio/vidéo se déroule dans StudentLife, sans service externe (4 personnes connectées au maximum).
+              </p>
             )}
           </Card>
         )}

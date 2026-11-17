@@ -8,6 +8,9 @@ requests>=2.31
 python-dotenv>=1.0
 cryptography>=42.0
 pillow>=10.0   # photos de la garde-robe (ImageField)
+# Appels audio/vidéo intégrés (US 28) : signalisation WebRTC par WebSocket
+channels==4.3.2
+daphne==4.2.3
 
 # Optionnel : transcription audio locale des réunions (POST /api/meetings/{id}/transcribe/).
 # Sans ce paquet, l'utilisateur colle le texte de la réunion.

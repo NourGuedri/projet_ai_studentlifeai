@@ -159,7 +159,7 @@ export default function NewMeetingPage() {
               <Field label="Participants" hint={`Adresses e-mail de leurs comptes StudentLife, séparées par des virgules ou par Entrée (${MAX_PARTICIPANTS} maximum). Ils recevront une notification.`}>
                 <EmailsInput emails={emails} onChange={setEmails} pending={pendingEmail} setPending={setPendingEmail} />
               </Field>
-              <p className="text-sm text-slate-500">Un lien Jitsi Meet unique est créé pour cet appel. Il s'ouvrira dans un nouvel onglet.</p>
+              <p className="text-sm text-slate-500">L'appel audio/vidéo se déroule dans StudentLife, sans service externe : l'organisateur et les invités le rejoignent depuis la page de la réunion (4 personnes connectées au maximum).</p>
             </div>
           ) : mode === "audio" ? (
             <div className="space-y-4 sm:col-span-2">
