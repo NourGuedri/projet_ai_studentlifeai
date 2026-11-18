@@ -17,5 +17,9 @@ daphne==4.2.3
 faster-whisper==1.2.1
 av>=14,<15   # faster-whisper 1.2.1 est incompatible avec PyAV 15+ (argument metadata_errors supprimé)
 
+# Optionnel : transcription audio locale des réunions (POST /api/meetings/{id}/transcribe/).
+# Sans ce paquet, l'utilisateur colle le texte de la réunion.
+# faster-whisper>=1.0
+
 # Optionnel : détection automatique des vêtements (module closet). Voir backend/closet/README.md
 # -r backend/closet/ml/requirements-ml.txt
