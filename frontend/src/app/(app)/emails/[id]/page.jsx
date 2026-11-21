@@ -73,6 +73,24 @@ export default function EmailDetailPage() {
     }
   }
 
+  async function gmailDraft() {
+    if (draft !== email.draft_reply) {
+      setError("Enregistrez d'abord vos modifications du brouillon.");
+      return;
+    }
+    if (!confirm("Créer ce brouillon dans votre Gmail ? Il ne sera pas envoyé : vous pourrez le relire et l'envoyer vous-même depuis Gmail.")) return;
+    setBusy("gmail");
+    setError("");
+    setNotice("");
+    try {
+      setNotice((await api.post(`/mails/${id}/gmail-draft/`)).detail);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function remove() {
     if (!confirm("Supprimer cet e-mail ?")) return;
     await api.del(`/mails/${id}/`);
@@ -85,7 +103,7 @@ export default function EmailDetailPage() {
   return (
     <>
       <PageHeader title={email.subject || "(sans objet)"}
-        subtitle={`${email.sender || "Expéditeur inconnu"}${email.received_at ? ` · ${fmtDateTime(email.received_at)}` : ""}`}
+        subtitle={`${email.sender || "Expéditeur inconnu"}${email.received_at ? ` · ${fmtDateTime(email.received_at)}` : ""}${email.source === "gmail" ? " · importé de Gmail" : ""}`}
         actions={<>
           <Link href="/emails" className={btnClass("ghost")}>Retour</Link>
           <Button variant="danger" onClick={remove}>Supprimer</Button>
@@ -126,12 +144,14 @@ export default function EmailDetailPage() {
 
         {(email.draft_reply || draft) && (
           <AiCard title="Brouillon de réponse">
-            <Alert tone="info">Ce n'est qu'un brouillon : rien n'est envoyé automatiquement. Relisez-le, modifiez-le, puis copiez-le dans votre messagerie.</Alert>
+            <Alert tone="info">Ce n'est qu'un brouillon : rien n'est envoyé automatiquement. Relisez-le, modifiez-le, puis copiez-le dans votre messagerie ou créez-le comme brouillon dans Gmail.</Alert>
             <Textarea rows={10} value={draft} onChange={(e) => setDraft(e.target.value)} className="mt-3" />
             <div className="mt-3 flex flex-wrap gap-2">
               <Button onClick={copyDraft} disabled={!draft.trim()}>Copier</Button>
               <Button variant="secondary" onClick={saveDraft} loading={busy === "save"} disabled={draft === email.draft_reply || (!!busy && busy !== "save")}>Enregistrer</Button>
+              <Button variant="success" onClick={gmailDraft} loading={busy === "gmail"} disabled={!email.draft_reply.trim() || (!!busy && busy !== "gmail")}>Créer le brouillon dans Gmail</Button>
             </div>
+            <p className="mt-2 text-xs text-slate-500">Le brouillon est déposé dans vos brouillons Gmail{email.source === "gmail" ? ", dans le même fil de discussion" : ""}. Rien n'est envoyé.</p>
           </AiCard>
         )}
       </div>

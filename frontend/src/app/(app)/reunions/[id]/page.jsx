@@ -194,7 +194,7 @@ export default function MeetingDetailPage() {
             {meeting.participants.length === 0 && <p className="mt-2 text-sm text-slate-500">Aucun participant invité.</p>}
             {meeting.is_call && (
               <p className="mt-3 text-sm text-slate-500">
-                L'appel audio/vidéo se déroule dans StudentLife, sans service externe (4 personnes connectées au maximum).
+                L'appel audio/vidéo se déroule dans StudentLife, sans service externe ({meeting.call_max_peers} personnes connectées au maximum).
                 L'organisateur peut l'enregistrer si tous les participants connectés l'acceptent.
               </p>
             )}

@@ -135,6 +135,13 @@ WEBRTC_ICE_SERVERS = json.loads(os.getenv("WEBRTC_ICE_SERVERS", "") or "[]")
 # Meeting recordings: kept outside MEDIA_ROOT (never public), served by GET /api/meetings/<id>/audio/.
 MEETINGS_AUDIO_ROOT = Path(os.getenv("MEETINGS_AUDIO_ROOT", "") or BASE_DIR / "private_media")
 MEETING_MAX_AUDIO_MB = int(os.getenv("MEETING_MAX_AUDIO_MB", "100"))
+# Most people one meeting can invite (e-mails and students of a formation together). It is not the number of
+# people connected to a call at the same time (MEETING_MAX_PEERS below).
+MEETING_MAX_INVITES = int(os.getenv("MEETING_MAX_INVITES", "50"))
+# Most people connected to one call at the same time. The call is a WebRTC mesh: each browser sends its audio and
+# video to every other one, so the upload grows with the number of people (the call page lowers the video quality
+# as people join). Above 8, ordinary connections usually struggle.
+MEETING_MAX_PEERS = max(2, int(os.getenv("MEETING_MAX_PEERS", "8")))
 # Transcription and AI analysis run in a background thread after a recording is sent. "1" runs them in the
 # request itself (the tests set it with override_settings).
 MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"
@@ -142,3 +149,15 @@ MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 # Language of the meetings, forced instead of detected (detection is unreliable on short or noisy recordings).
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "fr")
+
+# Gmail connection of the E-mails module (US 32 to 34): OAuth 2.0 Google, scopes gmail.readonly and gmail.compose.
+# Without GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET the Gmail features answer 503 (manual import keeps working).
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+# Must be listed as an authorised redirect URI of the OAuth client in the Google Cloud console.
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "") or "http://localhost:8000/api/mails/gmail/callback/"
+# Fernet key used to encrypt the Gmail refresh tokens in the database. Empty: derived from SECRET_KEY
+# (changing SECRET_KEY then makes the stored tokens unreadable: the users have to reconnect Gmail).
+GMAIL_TOKEN_KEY = os.getenv("GMAIL_TOKEN_KEY", "")
+# Number of most recent inbox messages imported by one synchronisation.
+GMAIL_SYNC_LIMIT = int(os.getenv("GMAIL_SYNC_LIMIT", "20"))

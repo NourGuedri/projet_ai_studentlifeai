@@ -1,6 +1,8 @@
 "use client";
 // In-app audio/video call (WebRTC). Audio and video go directly between the browsers; the backend
-// WebSocket (meetings/consumers.py) only passes the setup messages. At most 4 people (mesh).
+// WebSocket (meetings/consumers.py) only passes the setup messages. Mesh: each browser sends its audio and video to
+// every other one, up to MEETING_MAX_PEERS people (limit given by the server). To keep the call usable as people
+// join, the video sent on each connection gets a lower resolution and bitrate (the audio is never degraded).
 // Recording (US 28, exigence 8.1): the organizer asks, every connected person accepts or refuses; once everybody
 // accepted, the organizer's browser mixes the audio of all participants (Web Audio API), records it
 // (MediaRecorder) and sends it to the server, which transcribes and analyses it in the background.
@@ -11,7 +13,10 @@ import { Alert, Button, Card, Loading, PageHeader, ProgressBar, btnClass, cx } f
 import { api, wsUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-const MAX_PEERS = 4;
+// Shown before the server gives the real limit (meeting.call_max_peers, then the call ticket).
+const DEFAULT_MAX_PEERS = 8;
+// Above this number of people, a banner advises to switch the camera off.
+const CAMERA_ADVICE_ABOVE = 5;
 const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 const VIDEO = { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" };
 const KINDS = ["audio", "video"];
@@ -19,6 +24,13 @@ const CLOSE_FULL = 4409;
 const CLOSE_CONSENT_REFUSED = 4451;
 // Same limit as MEETING_MAX_AUDIO_MB on the server (100 MB by default).
 const MAX_AUDIO_MB = Number(process.env.NEXT_PUBLIC_MEETING_MAX_AUDIO_MB) || 100;
+/** Video sent on each connection, by number of people in the call (me included). */
+function videoQuality(count) {
+  if (count <= 3) return { maxBitrate: 800_000, scaleResolutionDownBy: 1 }; // normal (640x480)
+  if (count <= 5) return { maxBitrate: 400_000, scaleResolutionDownBy: 2 }; // reduced resolution (320x240)
+  return { maxBitrate: 180_000, scaleResolutionDownBy: 3 }; // low resolution and bitrate (about 213x160)
+}
+
 const NO_RECORDING = { state: "idle", session: null, recorder: null, accepted: [], waiting: [], reason: "", by: "" };
 
 // ------------------------------------------------------------------ recording
@@ -110,7 +122,7 @@ function ControlButton({ label, icon, active = true, danger = false, disabled = 
   );
 }
 
-function Tile({ stream, name, mic, cam, self = false, status, className }) {
+function Tile({ stream, name, mic, cam, self = false, status, compact = false, className }) {
   const ref = useRef(null);
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== stream) ref.current.srcObject = stream ?? null;
@@ -123,13 +135,15 @@ function Tile({ stream, name, mic, cam, self = false, status, className }) {
         className={cx("h-full w-full object-cover", self && "-scale-x-100", !showVideo && "invisible")} />
       {!showVideo && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-600 text-xl font-semibold text-white sm:h-20 sm:w-20 sm:text-2xl">
+          <span className={cx("flex items-center justify-center rounded-full bg-brand-600 font-semibold text-white",
+            compact ? "h-10 w-10 text-sm sm:h-12 sm:w-12 sm:text-base" : "h-16 w-16 text-xl sm:h-20 sm:w-20 sm:text-2xl")}>
             {initials(name)}
           </span>
         </div>
       )}
-      {status && <div className="absolute inset-x-0 top-0 bg-black/55 px-3 py-1.5 text-center text-xs text-white">{status}</div>}
-      <div className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-md bg-black/60 px-2 py-1 text-xs font-medium text-white">
+      {status && <div className={cx("absolute inset-x-0 top-0 bg-black/55 text-center text-white", compact ? "px-2 py-1 text-[11px]" : "px-3 py-1.5 text-xs")}>{status}</div>}
+      <div className={cx("absolute flex items-center gap-1.5 rounded-md bg-black/60 font-medium text-white",
+        compact ? "bottom-1 left-1 max-w-[calc(100%-0.5rem)] px-1.5 py-0.5 text-[11px]" : "bottom-2 left-2 max-w-[calc(100%-1rem)] px-2 py-1 text-xs")}>
         {!mic && <span title="Micro coupé" className="text-red-300"><CallIcon name="micOff" className="h-4 w-4" /><span className="sr-only">Micro coupé</span></span>}
         {!cam && <span title="Caméra coupée" className="text-slate-300"><CallIcon name="camOff" className="h-4 w-4" /><span className="sr-only">Caméra coupée</span></span>}
         <span className="truncate">{name}{self && " (vous)"}</span>
@@ -212,6 +226,7 @@ export default function MeetingCallPage() {
   const [recNotice, setRecNotice] = useState("");
   const [upload, setUpload] = useState(null); // {progress, error, file, session} while/after sending the recording
   const [canRecord, setCanRecord] = useState(false);
+  const [maxPeers, setMaxPeers] = useState(null); // limit given by the server
 
   const localRef = useRef(null); // MediaStream sent to the others
   const wsRef = useRef(null);
@@ -225,6 +240,7 @@ export default function MeetingCallPage() {
   const meRef = useRef(null);
   const audioCtxRef = useRef(null); // created on the organizer's click (browsers start audio only after a gesture)
   const recorderRef = useRef(null); // {recorder, chunks, sources: Map(track id -> node), dest, session, type, ext}
+  const peopleRef = useRef(1); // people in the call, me included: chooses the video quality
 
   // ---------------------------------------------------------------- local media
   const localTrack = (kind) => localRef.current?.getTracks().find((t) => t.kind === kind && t.readyState === "live");
@@ -248,6 +264,28 @@ export default function MeetingCallPage() {
 
   function replaceEverywhere(kind, track) {
     return Promise.all([...pcsRef.current.values()].map(({ pc }) => senderFor(pc, kind)?.replaceTrack(track).catch(() => {})));
+  }
+
+  /** Video quality of one connection, for the current number of people. The audio sender is never changed. */
+  async function applyVideoQuality(pc) {
+    const sender = senderFor(pc, "video");
+    if (!sender?.getParameters || !sender.setParameters) return;
+    const params = sender.getParameters();
+    // No encoding yet (before the negotiation ends): applied again once the connection is established.
+    if (!params.encodings?.length) return;
+    const quality = videoQuality(peopleRef.current);
+    const [first] = params.encodings;
+    if (first.maxBitrate === quality.maxBitrate && first.scaleResolutionDownBy === quality.scaleResolutionDownBy) return;
+    params.encodings = params.encodings.map((encoding) => ({ ...encoding, ...quality }));
+    try {
+      await sender.setParameters(params);
+    } catch {
+      // Not supported by this browser, or the connection is closing: the default quality stays.
+    }
+  }
+
+  function applyVideoQualityEverywhere() {
+    pcsRef.current.forEach(({ pc }) => applyVideoQuality(pc));
   }
 
   async function startPreview(wantVideo) {
@@ -467,7 +505,10 @@ export default function MeetingCallPage() {
       entry.remote.addTrack(e.track);
       patchPeer(peerId, { stream: new MediaStream(entry.remote.getTracks()) });
     };
-    pc.onconnectionstatechange = () => patchPeer(peerId, { conn: pc.connectionState });
+    pc.onconnectionstatechange = () => {
+      patchPeer(peerId, { conn: pc.connectionState });
+      if (pc.connectionState === "connected") applyVideoQuality(pc);
+    };
     if (offerer) {
       // One audio and one video slot, even without a camera: it can be switched on later with replaceTrack.
       for (const kind of KINDS) pc.addTransceiver(localTrack(kind) ?? kind, { direction: "sendrecv" });
@@ -587,6 +628,7 @@ export default function MeetingCallPage() {
       const data = await api.post(`/meetings/${id}/call-ticket/`);
       ticket = data.ticket;
       iceRef.current = data.ice_servers ?? [];
+      if (data.max_peers) setMaxPeers(data.max_peers);
     } catch (err) {
       setCallError(err.message);
       setPhase("lobby");
@@ -621,7 +663,7 @@ export default function MeetingCallPage() {
       if (event.code === CLOSE_CONSENT_REFUSED) {
         setCallError(refusal || "Vous avez refusé l'enregistrement en cours : vous pourrez rejoindre l'appel quand il sera terminé.");
       } else if (refusal || event.code === CLOSE_FULL) {
-        setCallError(refusal || `L'appel est complet (${MAX_PEERS} participants maximum). Réessayez quand quelqu'un sera parti.`);
+        setCallError(refusal || "L'appel est complet. Réessayez quand quelqu'un sera parti.");
       } else if (!navigator.onLine) {
         setCallError("Vous êtes hors ligne : l'appel a été interrompu. Vérifiez votre connexion, puis rejoignez à nouveau l'appel.");
       } else if (!opened) {
@@ -687,6 +729,13 @@ export default function MeetingCallPage() {
   // The mix follows the people in the call and my microphone.
   useEffect(() => { syncMix(); }, [peers, localStream]);
 
+  // Each arrival or departure changes the video quality sent to everybody.
+  const peopleCount = Object.keys(peers).length + 1;
+  useEffect(() => {
+    peopleRef.current = peopleCount;
+    applyVideoQualityEverywhere();
+  }, [peopleCount]);
+
   // Warn before closing the tab while recording or sending the recording.
   const busyRecording = recording.state === "recording" && recording.recorder === me?.id;
   const sending = upload && upload.progress !== null;
@@ -698,7 +747,10 @@ export default function MeetingCallPage() {
   }, [busyRecording, sending]);
 
   useEffect(() => {
-    api.get(`/meetings/${id}/`).then(setMeeting).catch((err) => setLoadError(err.message));
+    api.get(`/meetings/${id}/`).then((m) => {
+      setMeeting(m);
+      if (m.call_max_peers) setMaxPeers((current) => current ?? m.call_max_peers);
+    }).catch((err) => setLoadError(err.message));
   }, [id]);
 
   useEffect(() => {
@@ -713,6 +765,7 @@ export default function MeetingCallPage() {
     return <><Alert>Cette réunion n'est pas un appel audio/vidéo.</Alert><div className="mt-4">{back}</div></>;
   }
 
+  const limit = maxPeers ?? meeting.call_max_peers ?? DEFAULT_MAX_PEERS;
   const myName = me?.name ?? ([user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email || "Vous");
   const controls = (
     <>
@@ -787,8 +840,9 @@ export default function MeetingCallPage() {
               {mediaError && <Button variant="secondary" onClick={() => startPreview(!audioOnly)}>Réessayer</Button>}
             </div>
             <p className="text-xs text-slate-500">
-              Appel privé réservé à l'organisateur et aux invités ({MAX_PEERS} personnes maximum). Le son et l'image
-              passent directement entre les participants. L'appel n'est enregistré que si tous les participants
+              Appel privé réservé à l'organisateur et aux invités ({limit} personnes connectées au maximum). Le son et
+              l'image passent directement entre les participants ; la qualité vidéo baisse automatiquement quand il y a
+              beaucoup de monde. L'appel n'est enregistré que si tous les participants
               connectés l'acceptent.
             </p>
           </Card>
@@ -799,7 +853,13 @@ export default function MeetingCallPage() {
 
   const others = Object.values(peers);
   const count = others.length + 1;
-  const grid = count === 1 ? "grid-cols-1" : count === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2";
+  // 1 column for 1 person, 2 for 2 to 4, 3 for 5 to 9 (2 on a phone, which scrolls if needed).
+  const grid = count === 1 ? "grid-cols-1"
+    : count === 2 ? "grid-cols-1 sm:grid-cols-2"
+      : count <= 4 ? "grid-cols-2"
+        : "grid-cols-2 sm:grid-cols-3";
+  const compact = count >= 5;
+  const tileClass = compact ? "aspect-video" : "aspect-[4/3] sm:aspect-video";
   const isOrganizer = !!me?.organizer;
   // A participant who has not answered the current request yet.
   const mustAnswer = recording.state === "pending" && !isOrganizer && me
@@ -819,7 +879,7 @@ export default function MeetingCallPage() {
         <h1 className="truncate font-display text-base font-semibold sm:text-lg">{meeting.title}</h1>
         <span className="flex items-center gap-3">
           {recording.state === "recording" && <RecordingBadge />}
-          <span className="text-xs text-slate-300 sm:text-sm">{count} / {MAX_PEERS} participants</span>
+          <span className="text-xs text-slate-300 sm:text-sm">{count} / {limit} participants</span>
         </span>
       </div>
       {recording.state === "pending" && (
@@ -832,6 +892,12 @@ export default function MeetingCallPage() {
       {uploadPanel}
       {offline && <Alert>Vous êtes hors ligne : l'image et le son des autres peuvent être coupés.</Alert>}
       <Alert>{mediaError}</Alert>
+      {count > CAMERA_ADVICE_ABOVE && camOn && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-100 px-3 py-2 text-sm text-amber-900" role="status">
+          <span>Beaucoup de participants : coupez votre caméra pour garder un son fluide.</span>
+          <Button size="sm" variant="secondary" onClick={toggleCam} disabled={deviceBusy}>Couper ma caméra</Button>
+        </div>
+      )}
       {mustAnswer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="consent-title">
           <Card className="w-full max-w-md space-y-4">
@@ -848,16 +914,16 @@ export default function MeetingCallPage() {
           </Card>
         </div>
       )}
-      <div className={cx("grid flex-1 content-center gap-2 sm:gap-3", grid)}>
-        <Tile stream={localStream} name={myName} mic={micOn} cam={camOn} self
-          className={cx(count === 1 ? "mx-auto aspect-[4/3] w-full max-w-3xl sm:aspect-video" : "aspect-[4/3] sm:aspect-video")} />
+      <div className={cx("mx-auto grid w-full flex-1 content-center gap-2 sm:gap-3", grid, compact && "max-w-6xl")}>
+        <Tile stream={localStream} name={myName} mic={micOn} cam={camOn} self compact={compact}
+          className={cx(count === 1 ? "mx-auto aspect-[4/3] w-full max-w-3xl sm:aspect-video" : tileClass)} />
         {others.map((p) => (
-          <Tile key={p.id} stream={p.stream} name={p.name} mic={p.mic} cam={p.cam}
-            status={CONNECTION_STATUS[p.conn]} className="aspect-[4/3] sm:aspect-video" />
+          <Tile key={p.id} stream={p.stream} name={p.name} mic={p.mic} cam={p.cam} compact={compact}
+            status={CONNECTION_STATUS[p.conn]} className={tileClass} />
         ))}
       </div>
       {count === 1 && <p className="text-center text-sm text-slate-300">En attente des autres participants…</p>}
-      <div className="flex justify-center gap-3 pb-1 pt-1 sm:gap-4">
+      <div className="sticky bottom-0 -mx-2 flex justify-center gap-3 rounded-b-2xl bg-navy-950/95 px-2 pb-2 pt-2 sm:-mx-4 sm:gap-4 sm:px-4">
         {controls}
         {recordControl}
         <ControlButton label="Raccrocher" icon="phone" danger onClick={hangUp} />

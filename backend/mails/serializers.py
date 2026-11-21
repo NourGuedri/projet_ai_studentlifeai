@@ -10,9 +10,9 @@ class EmailMessageSerializer(serializers.ModelSerializer):
         model = EmailMessage
         fields = (
             "id", "sender", "subject", "body", "received_at", "is_important", "importance_reason", "summary",
-            "tasks", "draft_reply", "created_at",
+            "tasks", "draft_reply", "source", "created_at",
         )
-        read_only_fields = ("is_important", "importance_reason", "summary", "tasks")
+        read_only_fields = ("is_important", "importance_reason", "summary", "tasks", "source")
 
     def validate_body(self, value):
         if not value.strip():

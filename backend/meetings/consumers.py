@@ -1,6 +1,6 @@
 """WebRTC signaling for the in-app audio/video calls (US 28), and the recording consent (exigence 8.1).
 
-Audio and video go directly between browsers (WebRTC, mesh of at most MAX_PEERS people). This consumer only
+Audio and video go directly between browsers (WebRTC, mesh of at most settings.MEETING_MAX_PEERS people). This consumer only
 passes the small setup messages between them:
 
 client -> server
@@ -42,6 +42,7 @@ from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.utils import timezone
@@ -50,7 +51,6 @@ from .calls import read_ticket
 from .models import Meeting, RecordingConsent, RecordingSession
 from .serializers import display_name
 
-MAX_PEERS = 4
 MAX_MESSAGE_CHARS = 64 * 1024
 MAX_SDP_CHARS = 32 * 1024
 SIGNALS = {"offer", "answer", "ice-candidate"}
@@ -66,7 +66,7 @@ CLOSE_CONSENT_REFUSED = 4451
 # {meeting id: {"session", "state", "recorder", "accepted": {user ids}}}. In memory, like the channel layer: this
 # works for a single server process. Several processes would need a shared store (Redis).
 # Every check-then-update on these dicts happens without any "await" in between, so concurrent connections
-# cannot exceed MAX_PEERS nor start a recording twice.
+# cannot exceed settings.MEETING_MAX_PEERS nor start a recording twice.
 ROOMS = {}
 RECORDINGS = {}
 
@@ -155,9 +155,10 @@ class CallConsumer(AsyncJsonWebsocketConsumer):
 
         # Check the limit and reserve a place, with no await in between.
         room = ROOMS.setdefault(self.meeting_id, {})
-        if len(room) >= MAX_PEERS:
+        max_peers = settings.MEETING_MAX_PEERS
+        if len(room) >= max_peers:
             await self.accept()  # accept first so that the browser can read the reason
-            await self.send_error("call_full", f"L'appel est complet ({MAX_PEERS} participants maximum).")
+            await self.send_error("call_full", f"L'appel est complet ({max_peers} participants maximum).")
             await self.close(code=CLOSE_FULL)
             return
         rec = RECORDINGS.get(self.meeting_id)
