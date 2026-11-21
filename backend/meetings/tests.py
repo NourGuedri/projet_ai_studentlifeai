@@ -485,6 +485,13 @@ class CallTicketTests(APITestCase):
             self.assertEqual(response.status_code, 200, response.data)
             self.assertTrue(response.data["ticket"])
             self.assertEqual(response.data["ice_servers"], ICE_SERVERS)
+            self.assertEqual(response.data["max_peers"], settings.MEETING_MAX_PEERS)
+
+    def test_ticket_gives_the_configured_limit(self):
+        self.client.force_authenticate(self.guest)
+        with override_settings(MEETING_MAX_PEERS=12):
+            self.assertEqual(self.client.post(self.url).data["max_peers"], 12)
+        self.assertEqual(self.client.get(f"/api/meetings/{self.call.id}/").data["call_max_peers"], settings.MEETING_MAX_PEERS)
 
     def test_uninvited_user_gets_404(self):
         self.client.force_authenticate(self.outsider)
@@ -611,16 +618,38 @@ class CallSignalingTests(CallTestCase):
         await self.close_all()
         self.assertEqual(consumers.ROOMS, {})
 
-    async def test_fifth_person_is_refused(self):
-        for user in [self.owner, *self.guests[:3]]:
+    def test_default_limit_is_8(self):
+        """Without MEETING_MAX_PEERS in the environment (nor in .env), the limit is 8."""
+        import importlib.util
+        import os
+
+        path = Path(settings.BASE_DIR) / "config" / "settings.py"
+        spec = importlib.util.spec_from_file_location("settings_without_env", path)
+        module = importlib.util.module_from_spec(spec)
+        env = {k: v for k, v in os.environ.items() if k != "MEETING_MAX_PEERS"}
+        with patch.dict(os.environ, env, clear=True), patch("dotenv.load_dotenv"):
+            spec.loader.exec_module(module)
+        self.assertEqual(module.MEETING_MAX_PEERS, 8)
+
+    async def test_person_above_the_limit_is_refused(self):
+        with override_settings(MEETING_MAX_PEERS=3):
+            for user in [self.owner, *self.guests[:2]]:
+                await self.join(user)
+            extra, connected, _code = await self.connect(self.guests[2])
+            self.assertTrue(connected)  # accepted only to explain the refusal
+            error = await extra.receive_json_from()
+            self.assertEqual(error["code"], "call_full")
+            self.assertIn("3 participants maximum", error["detail"])
+            closed = await extra.receive_output()
+            self.assertEqual(closed, {"type": "websocket.close", "code": consumers.CLOSE_FULL})
+            self.assertEqual(len(consumers.ROOMS[self.call.id]), 3)
+        await self.close_all()
+
+    async def test_more_than_four_people_can_join_by_default(self):
+        # 5 people (more than the old limit of 4) are all admitted with the default limit.
+        for user in [self.owner, *self.guests]:
             await self.join(user)
-        fifth, connected, _code = await self.connect(self.guests[3])
-        self.assertTrue(connected)  # accepted only to explain the refusal
-        error = await fifth.receive_json_from()
-        self.assertEqual(error["code"], "call_full")
-        closed = await fifth.receive_output()
-        self.assertEqual(closed, {"type": "websocket.close", "code": consumers.CLOSE_FULL})
-        self.assertEqual(len(consumers.ROOMS[self.call.id]), 4)
+        self.assertEqual(len(consumers.ROOMS[self.call.id]), 5)
         await self.close_all()
 
 

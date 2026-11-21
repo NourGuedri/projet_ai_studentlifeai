@@ -136,8 +136,12 @@ WEBRTC_ICE_SERVERS = json.loads(os.getenv("WEBRTC_ICE_SERVERS", "") or "[]")
 MEETINGS_AUDIO_ROOT = Path(os.getenv("MEETINGS_AUDIO_ROOT", "") or BASE_DIR / "private_media")
 MEETING_MAX_AUDIO_MB = int(os.getenv("MEETING_MAX_AUDIO_MB", "100"))
 # Most people one meeting can invite (e-mails and students of a formation together). It is not the number of
-# people connected to a call at the same time (MAX_PEERS in meetings/consumers.py).
+# people connected to a call at the same time (MEETING_MAX_PEERS below).
 MEETING_MAX_INVITES = int(os.getenv("MEETING_MAX_INVITES", "50"))
+# Most people connected to one call at the same time. The call is a WebRTC mesh: each browser sends its audio and
+# video to every other one, so the upload grows with the number of people (the call page lowers the video quality
+# as people join). Above 8, ordinary connections usually struggle.
+MEETING_MAX_PEERS = max(2, int(os.getenv("MEETING_MAX_PEERS", "8")))
 # Transcription and AI analysis run in a background thread after a recording is sent. "1" runs them in the
 # request itself (the tests set it with override_settings).
 MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"

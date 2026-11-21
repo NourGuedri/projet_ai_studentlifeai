@@ -243,4 +243,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting = get_object_or_404(self.get_queryset(), pk=pk)
         if not meeting.call_room:
             return Response({"detail": "Cette réunion n'est pas un appel audio/vidéo."}, status=400)
-        return Response({"ticket": make_ticket(request.user, meeting), "ice_servers": settings.WEBRTC_ICE_SERVERS})
+        return Response({
+            "ticket": make_ticket(request.user, meeting), "ice_servers": settings.WEBRTC_ICE_SERVERS,
+            "max_peers": settings.MEETING_MAX_PEERS,
+        })

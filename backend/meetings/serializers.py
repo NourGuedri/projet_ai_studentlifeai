@@ -40,6 +40,8 @@ class MeetingSerializer(serializers.ModelSerializer):
     # Video call: "video_call": true makes the meeting an in-app call (it gets an internal room id).
     video_call = serializers.BooleanField(write_only=True, required=False, default=False)
     is_call = serializers.SerializerMethodField()
+    # Most people connected to the call at the same time (settings.MEETING_MAX_PEERS), null if not a call.
+    call_max_peers = serializers.SerializerMethodField()
     participant_emails = serializers.ListField(
         child=serializers.EmailField(), write_only=True, required=False, allow_empty=True,
     )
@@ -61,7 +63,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "id", "title", "date", "audio_file", "has_audio", "audio_url", "consent_confirmed", "transcript",
             "summary", "topics", "key_points", "decisions", "tasks", "status", "status_label",
             "processing_status", "processing_label", "processing_error", "is_processing", "created_at", "updated_at",
-            "scheduled_at", "video_call", "is_call", "participant_emails", "invite_formation", "participants",
+            "scheduled_at", "video_call", "is_call", "call_max_peers", "participant_emails", "invite_formation", "participants",
             "owner_name", "is_owner",
         )
         read_only_fields = (
@@ -81,6 +83,9 @@ class MeetingSerializer(serializers.ModelSerializer):
 
     def get_is_call(self, meeting):
         return bool(meeting.call_room)
+
+    def get_call_max_peers(self, meeting):
+        return settings.MEETING_MAX_PEERS if meeting.call_room else None
 
     def get_owner_name(self, meeting):
         return display_name(meeting.owner)

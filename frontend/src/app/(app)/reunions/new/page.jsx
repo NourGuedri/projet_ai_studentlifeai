@@ -185,7 +185,7 @@ export default function NewMeetingPage() {
                   </Select>
                 </Field>
               )}
-              <p className="text-sm text-slate-500">L'appel audio/vidéo se déroule dans StudentLife, sans service externe : l'organisateur et les invités le rejoignent depuis la page de la réunion (4 personnes connectées au maximum).</p>
+              <p className="text-sm text-slate-500">L'appel audio/vidéo se déroule dans StudentLife, sans service externe : l'organisateur et les invités le rejoignent depuis la page de la réunion. Le nombre de personnes connectées en même temps est limité (la limite est indiquée sur la page de la réunion) et la qualité vidéo s'adapte au nombre de participants.</p>
             </div>
           ) : mode === "audio" ? (
             <div className="space-y-4 sm:col-span-2">
