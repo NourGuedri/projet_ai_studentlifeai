@@ -145,3 +145,15 @@ MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 # Language of the meetings, forced instead of detected (detection is unreliable on short or noisy recordings).
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "fr")
+
+# Gmail connection of the E-mails module (US 32 to 34): OAuth 2.0 Google, scopes gmail.readonly and gmail.compose.
+# Without GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET the Gmail features answer 503 (manual import keeps working).
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+# Must be listed as an authorised redirect URI of the OAuth client in the Google Cloud console.
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "") or "http://localhost:8000/api/mails/gmail/callback/"
+# Fernet key used to encrypt the Gmail refresh tokens in the database. Empty: derived from SECRET_KEY
+# (changing SECRET_KEY then makes the stored tokens unreadable: the users have to reconnect Gmail).
+GMAIL_TOKEN_KEY = os.getenv("GMAIL_TOKEN_KEY", "")
+# Number of most recent inbox messages imported by one synchronisation.
+GMAIL_SYNC_LIMIT = int(os.getenv("GMAIL_SYNC_LIMIT", "20"))

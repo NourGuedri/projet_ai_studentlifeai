@@ -49,6 +49,82 @@ function EmailForm({ onSaved, onCancel }) {
   );
 }
 
+// Gmail connection: OAuth 2.0 Google. Only drafts are created in Gmail, nothing is ever sent.
+function GmailPanel({ onSynced }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    api.get("/mails/gmail/status/").then(setStatus).catch((err) => setError(err.message));
+    // Back from Google: /emails?gmail=connected|error. The parameter is then removed from the address bar.
+    const result = new URLSearchParams(window.location.search).get("gmail");
+    if (result === "connected") setNotice("Votre compte Gmail est connecté. Cliquez sur « Synchroniser » pour importer vos e-mails.");
+    if (result === "error") setError("La connexion à Gmail a échoué ou a été annulée. Réessayez.");
+    if (result) window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
+  async function run(name, func) {
+    setBusy(name);
+    setError("");
+    setNotice("");
+    try { await func(); } catch (err) { setError(err.message); } finally { setBusy(""); }
+  }
+
+  const connect = () => run("connect", async () => {
+    const { url } = await api.post("/mails/gmail/connect/");
+    window.location.href = url;
+  });
+  const sync = () => run("sync", async () => {
+    const data = await api.post("/mails/gmail/sync/");
+    setStatus(data);
+    setNotice(data.imported === 0 ? "Aucun nouvel e-mail dans votre boîte de réception."
+      : `${data.imported} e-mail${data.imported > 1 ? "s importés" : " importé"} depuis Gmail.`);
+    await onSynced();
+  });
+  const disconnect = () => run("disconnect", async () => {
+    if (!confirm("Déconnecter votre compte Gmail ? Les e-mails déjà importés resteront dans StudentLife.")) return;
+    const data = await api.post("/mails/gmail/disconnect/");
+    setStatus(data);
+    setNotice(data.detail);
+  });
+
+  return (
+    <Card className="mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-display text-lg font-semibold">Gmail</h2>
+          {!status ? <p className="text-sm text-slate-500">Chargement…</p>
+            : !status.configured ? <p className="text-sm text-slate-500">La connexion à Gmail n'est pas configurée sur le serveur. L'ajout manuel reste disponible.</p>
+            : status.connected ? (
+              <p className="text-sm text-slate-600">
+                Connecté : <span className="font-medium">{status.email}</span>
+                {" · "}{status.last_synced_at ? `dernière synchronisation ${fmtDateTime(status.last_synced_at)}` : "jamais synchronisé"}
+              </p>
+            ) : <p className="text-sm text-slate-500">Importez vos derniers e-mails Gmail. StudentLife peut lire vos e-mails et créer des brouillons, mais n'envoie jamais rien.</p>}
+        </div>
+        {status?.configured && (
+          <div className="flex flex-wrap gap-2">
+            {status.connected ? (
+              <>
+                <Button variant="success" onClick={sync} loading={busy === "sync"} disabled={!!busy}>Synchroniser</Button>
+                <Button variant="ghost" onClick={disconnect} loading={busy === "disconnect"} disabled={!!busy}>Déconnecter</Button>
+              </>
+            ) : <Button onClick={connect} loading={busy === "connect"} disabled={!!busy}>Connecter mon Gmail</Button>}
+          </div>
+        )}
+      </div>
+      {(error || notice) && (
+        <div className="mt-3 space-y-2">
+          <Alert>{error}</Alert>
+          <Alert tone="success">{notice}</Alert>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ImportanceBadge({ value }) {
   if (value === true) return <Badge tone="red">Important</Badge>;
   if (value === false) return <Badge tone="slate">Non important</Badge>;
@@ -78,8 +154,9 @@ export default function EmailsPage() {
 
   return (
     <>
-      <PageHeader title="E-mails" subtitle="Collez vos e-mails pour repérer les importants, les résumer, extraire les tâches et préparer une réponse."
+      <PageHeader title="E-mails" subtitle="Importez vos e-mails depuis Gmail ou collez-les pour repérer les importants, les résumer, extraire les tâches et préparer une réponse."
         actions={!adding && <Button onClick={() => setAdding(true)}>Ajouter un e-mail</Button>} />
+      <GmailPanel onSynced={load} />
       {adding && (
         <div className="mb-6">
           <EmailForm onCancel={() => setAdding(false)} onSaved={async () => { setAdding(false); await load(); }} />
@@ -94,7 +171,7 @@ export default function EmailsPage() {
 
       {!emails ? (!error && <Loading />) : emails.length === 0 ? (
         <EmptyState title={importantOnly ? "Aucun e-mail important" : "Aucun e-mail"}
-          text={importantOnly ? "Analysez l'importance de vos e-mails pour les retrouver ici." : "Ajoutez un e-mail en copiant-collant son contenu."} />
+          text={importantOnly ? "Analysez l'importance de vos e-mails pour les retrouver ici." : "Synchronisez votre Gmail ou ajoutez un e-mail en copiant-collant son contenu."} />
       ) : (
         <ul className="space-y-3">
           {emails.map((m) => (
@@ -106,7 +183,10 @@ export default function EmailsPage() {
                       <p className="truncate font-medium">{m.subject || "(sans objet)"}</p>
                       <p className="truncate text-sm text-slate-500">{m.sender || "Expéditeur inconnu"}{m.received_at && ` · ${fmtDateTime(m.received_at)}`}</p>
                     </div>
-                    <ImportanceBadge value={m.is_important} />
+                    <div className="flex shrink-0 gap-1.5">
+                      {m.source === "gmail" && <Badge tone="amber">Gmail</Badge>}
+                      <ImportanceBadge value={m.is_important} />
+                    </div>
                   </div>
                   <p className="mt-2 line-clamp-2 text-sm text-slate-600">{m.summary || m.body}</p>
                 </Card>
