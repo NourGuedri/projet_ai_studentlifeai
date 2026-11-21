@@ -1,14 +1,15 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Alert, Button, Card, Field, Input, PageHeader, ProgressBar, Textarea, btnClass, cx } from "@/components/ui";
+import { useEffect, useState } from "react";
+import { Alert, Button, Card, Field, Input, PageHeader, ProgressBar, Select, Textarea, btnClass, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 
 // Same limit as MEETING_MAX_AUDIO_MB on the server (100 MB by default).
 const MAX_AUDIO_MB = Number(process.env.NEXT_PUBLIC_MEETING_MAX_AUDIO_MB) || 100;
 const AUDIO_EXT = [".mp3", ".wav", ".m4a", ".webm", ".ogg"];
-const MAX_PARTICIPANTS = 20;
+// Same limit as MEETING_MAX_INVITES on the server (50 by default); the server also counts a formation's students.
+const MAX_PARTICIPANTS = Number(process.env.NEXT_PUBLIC_MEETING_MAX_INVITES) || 50;
 const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
 const today = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
 // Next full hour, in the "YYYY-MM-DDTHH:MM" format of <input type="datetime-local">.
@@ -65,12 +66,20 @@ export default function NewMeetingPage() {
   const [scheduledAt, setScheduledAt] = useState(nextHourLocal);
   const [emails, setEmails] = useState([]);
   const [pendingEmail, setPendingEmail] = useState("");
+  // Formations the user teaches: their students can be invited all at once.
+  const [formations, setFormations] = useState([]);
+  const [formationId, setFormationId] = useState("");
   const [file, setFile] = useState(null);
   const [consent, setConsent] = useState(false);
   const [progress, setProgress] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  useEffect(() => {
+    // Optional list: without it, the participants are still invited by e-mail.
+    api.get("/meetings/my-formations/").then(setFormations).catch(() => setFormations([]));
+  }, []);
 
   function pickFile(e) {
     const picked = e.target.files[0] ?? null;
@@ -100,7 +109,10 @@ export default function NewMeetingPage() {
       if (!scheduledAt) return setError("Indiquez la date et l'heure de l'appel.");
       const invalid = participants.filter((p) => !EMAIL_RE.test(p));
       if (invalid.length) return setError(`Adresse e-mail invalide : ${invalid.join(", ")}.`);
-      if (participants.length > MAX_PARTICIPANTS) return setError(`${MAX_PARTICIPANTS} participants au maximum.`);
+      const formation = formations.find((f) => String(f.id) === formationId);
+      if (participants.length + (formation?.enrolled_count ?? 0) > MAX_PARTICIPANTS) {
+        return setError(`${MAX_PARTICIPANTS} participants au maximum.`);
+      }
     }
     setBusy(true);
     try {
@@ -116,6 +128,7 @@ export default function NewMeetingPage() {
       } else if (mode === "call") {
         meeting = await api.post("/meetings/", {
           title: form.title, video_call: true, scheduled_at: new Date(scheduledAt).toISOString(), participant_emails: participants,
+          ...(formationId ? { invite_formation: Number(formationId) } : {}),
         });
       } else {
         meeting = await api.post("/meetings/", form);
@@ -160,6 +173,18 @@ export default function NewMeetingPage() {
               <Field label="Participants" hint={`Adresses e-mail de leurs comptes StudentLife, séparées par des virgules ou par Entrée (${MAX_PARTICIPANTS} maximum). Ils recevront une notification.`}>
                 <EmailsInput emails={emails} onChange={setEmails} pending={pendingEmail} setPending={setPendingEmail} />
               </Field>
+              {formations.length > 0 && (
+                <Field label="Inviter les inscrits d'une formation" hint="Tous les étudiants inscrits sont ajoutés aux participants et reçoivent une notification.">
+                  <Select value={formationId} onChange={(e) => setFormationId(e.target.value)}>
+                    <option value="">Aucune formation</option>
+                    {formations.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.title} ({f.enrolled_count} inscrit{f.enrolled_count > 1 ? "s" : ""})
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
               <p className="text-sm text-slate-500">L'appel audio/vidéo se déroule dans StudentLife, sans service externe : l'organisateur et les invités le rejoignent depuis la page de la réunion (4 personnes connectées au maximum).</p>
             </div>
           ) : mode === "audio" ? (

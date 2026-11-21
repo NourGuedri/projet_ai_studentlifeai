@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from common import ai
+from learning.models import Enrollment, Formation
 from notifications.models import Notification
 
 from config.asgi import application
@@ -316,15 +317,150 @@ class VideoCallTests(APITestCase):
         self.assertIn("vous-même", str(response.data["participant_emails"]))
 
     def test_participant_limit(self):
-        response = self.plan_call([f"p{i}@example.com" for i in range(21)])
+        self.assertEqual(settings.MEETING_MAX_INVITES, 50)  # default, MEETING_MAX_INVITES in the environment
+        response = self.plan_call([f"p{i}@example.com" for i in range(51)])
         self.assertEqual(response.status_code, 400)
-        self.assertIn("20", str(response.data["participant_emails"]))
+        self.assertIn("50", str(response.data["participant_emails"]))
+        with override_settings(MEETING_MAX_INVITES=1):
+            response = self.plan_call(["invite@example.com", "invite2@example.com"])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("1 participants", str(response.data["participant_emails"]))
+        self.assertFalse(Meeting.objects.exists())
 
     def test_uninvited_user_cannot_see_the_meeting(self):
         meeting_id = self.plan_call().data["id"]
         self.client.force_authenticate(self.outsider)
         self.assertEqual(self.client.get(f"/api/meetings/{meeting_id}/").status_code, 404)
         self.assertEqual(self.client.get("/api/meetings/").data, [])
+
+
+class TeacherInvitationTests(APITestCase):
+    """Teachers use the meetings too: they invite students (one by one or a whole formation) and are invited."""
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.teacher = user_model.objects.create_user(
+            email="prof@example.com", password="password123", role="teacher", first_name="Amel", last_name="Trabelsi",
+        )
+        self.other_teacher = user_model.objects.create_user(
+            email="prof2@example.com", password="password123", role="teacher",
+        )
+        self.student = user_model.objects.create_user(email="etu1@example.com", password="password123")
+        self.student2 = user_model.objects.create_user(email="etu2@example.com", password="password123")
+        self.student3 = user_model.objects.create_user(email="etu3@example.com", password="password123")
+        inactive = user_model.objects.create_user(email="etu-inactif@example.com", password="password123", is_active=False)
+        self.formation = Formation.objects.create(teacher=self.teacher, title="Django avancé", is_published=True)
+        self.other_formation = Formation.objects.create(teacher=self.other_teacher, title="Réseaux")
+        for user in (self.student, self.student2, inactive):
+            Enrollment.objects.create(user=user, formation=self.formation)
+        Enrollment.objects.create(user=self.student3, formation=self.other_formation)
+        self.client.force_authenticate(self.teacher)
+
+    def plan_call(self, emails=(), **extra):
+        payload = {
+            "title": "Séance de questions", "video_call": True,
+            "scheduled_at": "2026-12-01T10:00:00+01:00", "participant_emails": list(emails), **extra,
+        }
+        return self.client.post("/api/meetings/", payload, format="json")
+
+    def test_teacher_invites_a_student(self):
+        response = self.plan_call(["etu1@example.com"])
+        self.assertEqual(response.status_code, 201, response.data)
+        meeting = Meeting.objects.get(pk=response.data["id"])
+        self.assertEqual(meeting.owner, self.teacher)
+        self.assertTrue(meeting.call_room)
+
+        notification = Notification.objects.get(user=self.student, title=INVITATION)
+        self.assertIn("Amel Trabelsi", notification.message)
+        self.assertEqual(notification.link, f"/reunions/{meeting.id}")
+
+        self.client.force_authenticate(self.student)
+        self.assertEqual([m["id"] for m in self.client.get("/api/meetings/").data], [meeting.id])
+        detail = self.client.get(f"/api/meetings/{meeting.id}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertFalse(detail.data["is_owner"])
+        self.assertEqual(self.client.post(f"/api/meetings/{meeting.id}/call-ticket/").status_code, 200)
+
+    def test_student_invites_a_teacher(self):
+        self.client.force_authenticate(self.student)
+        response = self.plan_call(["prof@example.com"])
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(Notification.objects.filter(user=self.teacher, title=INVITATION).exists())
+        self.client.force_authenticate(self.teacher)
+        self.assertEqual([m["id"] for m in self.client.get("/api/meetings/").data], [response.data["id"]])
+        self.assertEqual(self.client.post(f"/api/meetings/{response.data['id']}/call-ticket/").status_code, 200)
+
+    def test_invite_formation_adds_every_enrolled_student(self):
+        Enrollment.objects.create(user=self.teacher, formation=self.formation)  # never invites oneself
+        response = self.plan_call(["etu1@example.com", "etu3@example.com"], invite_formation=self.formation.id)
+        self.assertEqual(response.status_code, 201, response.data)
+        meeting = Meeting.objects.get(pk=response.data["id"])
+        # etu1 is in both the e-mails and the formation: invited once; the inactive student is left out.
+        self.assertEqual(set(meeting.participants.all()), {self.student, self.student2, self.student3})
+        self.assertNotIn("invite_formation", response.data)
+        for user in (self.student, self.student2, self.student3):
+            self.assertEqual(Notification.objects.filter(user=user, title=INVITATION).count(), 1)
+        self.assertFalse(Notification.objects.filter(user=self.teacher, title=INVITATION).exists())
+
+    def test_invite_formation_on_update_keeps_the_invited_and_notifies_the_new_ones(self):
+        meeting_id = self.plan_call(["etu3@example.com"]).data["id"]
+        response = self.client.patch(
+            f"/api/meetings/{meeting_id}/", {"invite_formation": self.formation.id}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        meeting = Meeting.objects.get(pk=meeting_id)
+        self.assertEqual(set(meeting.participants.all()), {self.student, self.student2, self.student3})
+        self.assertEqual(Notification.objects.filter(user=self.student3, title=INVITATION).count(), 1)
+        self.assertEqual(Notification.objects.filter(user=self.student, title=INVITATION).count(), 1)
+
+    def test_invite_formation_of_another_teacher_is_forbidden(self):
+        response = self.plan_call(invite_formation=self.other_formation.id)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Meeting.objects.exists())
+        self.assertFalse(Notification.objects.filter(title=INVITATION).exists())
+
+    def test_invite_formation_by_a_student_is_forbidden(self):
+        self.client.force_authenticate(self.student)
+        response = self.plan_call(invite_formation=self.formation.id)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Meeting.objects.exists())
+
+    def test_invite_formation_on_update_is_forbidden_for_another_formation(self):
+        meeting_id = self.plan_call(["etu1@example.com"]).data["id"]
+        response = self.client.patch(
+            f"/api/meetings/{meeting_id}/", {"invite_formation": self.other_formation.id}, format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(list(Meeting.objects.get(pk=meeting_id).participants.all()), [self.student])
+
+    def test_unknown_formation_is_rejected(self):
+        response = self.plan_call(invite_formation=999999)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("invite_formation", response.data)
+
+    def test_invite_formation_respects_the_invitation_limit(self):
+        with override_settings(MEETING_MAX_INVITES=2):
+            response = self.plan_call(["etu3@example.com"], invite_formation=self.formation.id)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("2 au maximum", str(response.data["invite_formation"]))
+            self.assertFalse(Meeting.objects.exists())
+            self.assertFalse(Notification.objects.filter(title=INVITATION).exists())
+            # Exactly at the limit: accepted.
+            response = self.plan_call(invite_formation=self.formation.id)
+            self.assertEqual(response.status_code, 201, response.data)
+
+    def test_my_formations_lists_only_the_user_formations(self):
+        algo = Formation.objects.create(teacher=self.teacher, title="Algorithmique")
+        response = self.client.get("/api/meetings/my-formations/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [
+            {"id": algo.id, "title": "Algorithmique", "enrolled_count": 0},
+            {"id": self.formation.id, "title": "Django avancé", "enrolled_count": 2},  # inactive student not counted
+        ])
+        self.client.force_authenticate(self.student)
+        self.assertEqual(self.client.get("/api/meetings/my-formations/").data, [])
+        self.client.force_authenticate(None)
+        self.assertEqual(self.client.get("/api/meetings/my-formations/").status_code, 401)
 
 
 # ------------------------------------------------------------------ in-app calls: ticket and WebSocket signaling

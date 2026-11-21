@@ -27,9 +27,9 @@ const NAV = [
   { href: "/admin/content", label: "Contenus et signalements", icon: "flag", roles: ["admin"] },
   { href: "/admin/announcements", label: "Annonces", icon: "megaphone", roles: ["admin"] },
 
-  { group: "Réunions et e-mails", roles: ["student"] },
-  { href: "/reunions", label: "Réunions", icon: "mic", roles: ["student"] },
-  { href: "/emails", label: "E-mails", icon: "mail", roles: ["student"] },
+  { group: "Réunions et e-mails", roles: ALL },
+  { href: "/reunions", label: "Réunions", icon: "mic", roles: ALL },
+  { href: "/emails", label: "E-mails", icon: "mail", roles: ALL },
 
   { group: "Vie quotidienne", roles: ["student"] },
   { href: "/closet", label: "Mon dressing", icon: "shirt", roles: ["student"] },
@@ -50,7 +50,8 @@ function Sidebar({ onNavigate }) {
   const { user, logout } = useAuth();
   const { unread } = useNotifications();
 
-  const items = NAV.filter((n) => n.group || n.roles.includes(user.role));
+  // Every entry, group titles included, has its roles: a role never sees an empty group title.
+  const items = NAV.filter((n) => n.roles.includes(user.role));
 
   const current = NAV.filter(
     (n) =>

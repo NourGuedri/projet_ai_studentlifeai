@@ -3,12 +3,13 @@ from django.contrib.auth import get_user_model
 from django.core.validators import FileExtensionValidator
 from django.utils import timezone
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
 
 from common.tasks import clean_tasks
+from learning.models import Enrollment, Formation
 
 from .models import AUDIO_EXTENSIONS, Meeting
 
-MAX_PARTICIPANTS = 20
 MAX_AI_ITEMS = 20  # topics / key points kept from one AI answer
 
 
@@ -42,6 +43,8 @@ class MeetingSerializer(serializers.ModelSerializer):
     participant_emails = serializers.ListField(
         child=serializers.EmailField(), write_only=True, required=False, allow_empty=True,
     )
+    # Teacher: id of one of their formations, whose enrolled students are added to the participants.
+    invite_formation = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     participants = ParticipantSerializer(many=True, read_only=True)
     owner_name = serializers.SerializerMethodField()
     is_owner = serializers.SerializerMethodField()
@@ -58,7 +61,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "id", "title", "date", "audio_file", "has_audio", "audio_url", "consent_confirmed", "transcript",
             "summary", "topics", "key_points", "decisions", "tasks", "status", "status_label",
             "processing_status", "processing_label", "processing_error", "is_processing", "created_at", "updated_at",
-            "scheduled_at", "video_call", "is_call", "participant_emails", "participants",
+            "scheduled_at", "video_call", "is_call", "participant_emails", "invite_formation", "participants",
             "owner_name", "is_owner",
         )
         read_only_fields = (
@@ -88,8 +91,9 @@ class MeetingSerializer(serializers.ModelSerializer):
 
     def validate_participant_emails(self, value):
         emails = list(dict.fromkeys(e.strip().lower() for e in value if e.strip()))  # dedupe, keep order
-        if len(emails) > MAX_PARTICIPANTS:
-            raise serializers.ValidationError(f"Vous pouvez inviter {MAX_PARTICIPANTS} participants au maximum.")
+        limit = settings.MEETING_MAX_INVITES
+        if len(emails) > limit:
+            raise serializers.ValidationError(f"Vous pouvez inviter {limit} participants au maximum.")
         user = self._user()
         if user and user.email.lower() in emails:
             raise serializers.ValidationError("Vous ne pouvez pas vous inviter vous-même.")
@@ -98,6 +102,43 @@ class MeetingSerializer(serializers.ModelSerializer):
         if unknown:
             raise serializers.ValidationError(f"Aucun compte actif ne correspond à : {', '.join(unknown)}.")
         return [users[e] for e in emails]
+
+    def validate_invite_formation(self, value):
+        """Active students enrolled in the formation, for its teacher only (403 for anybody else)."""
+        if value is None:
+            return None
+        formation = Formation.objects.filter(pk=value).first()
+        if formation is None:
+            raise serializers.ValidationError("Formation introuvable.")
+        user = self._user()
+        if not user or formation.teacher_id != user.id:
+            raise PermissionDenied("Seul l'enseignant de cette formation peut inviter ses inscrits.")
+        enrollments = (
+            Enrollment.objects.filter(formation=formation, user__is_active=True)
+            .exclude(user=user).select_related("user").order_by("created_at", "id")
+        )
+        return [e.user for e in enrollments]
+
+    def _merge_formation(self, attrs):
+        """Add the formation's students to the participants (e-mails sent now, else the current ones)."""
+        students = attrs.pop("invite_formation", None)
+        if students is None:
+            return
+        if "participant_emails" in attrs:
+            participants = list(attrs["participant_emails"])
+        else:
+            participants = list(self.instance.participants.all()) if self.instance else []
+        known = {u.id for u in participants}
+        participants += [u for u in students if u.id not in known]
+        limit = settings.MEETING_MAX_INVITES
+        if len(participants) > limit:
+            raise serializers.ValidationError({
+                "invite_formation": (
+                    f"Avec les inscrits de cette formation, la réunion aurait {len(participants)} invités : "
+                    f"{limit} au maximum."
+                ),
+            })
+        attrs["participant_emails"] = participants
 
     def validate_audio_file(self, value):
         return validate_audio(value) if value else value
@@ -116,6 +157,7 @@ class MeetingSerializer(serializers.ModelSerializer):
         if attrs.get("scheduled_at"):
             # The meeting day follows the planned date and time (list sorting, AI prompts).
             attrs["date"] = timezone.localtime(attrs["scheduled_at"]).date()
+        self._merge_formation(attrs)
         return attrs
 
     # The view reads this after save() to notify only the people who were just invited.

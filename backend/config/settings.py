@@ -135,6 +135,9 @@ WEBRTC_ICE_SERVERS = json.loads(os.getenv("WEBRTC_ICE_SERVERS", "") or "[]")
 # Meeting recordings: kept outside MEDIA_ROOT (never public), served by GET /api/meetings/<id>/audio/.
 MEETINGS_AUDIO_ROOT = Path(os.getenv("MEETINGS_AUDIO_ROOT", "") or BASE_DIR / "private_media")
 MEETING_MAX_AUDIO_MB = int(os.getenv("MEETING_MAX_AUDIO_MB", "100"))
+# Most people one meeting can invite (e-mails and students of a formation together). It is not the number of
+# people connected to a call at the same time (MAX_PEERS in meetings/consumers.py).
+MEETING_MAX_INVITES = int(os.getenv("MEETING_MAX_INVITES", "50"))
 # Transcription and AI analysis run in a background thread after a recording is sent. "1" runs them in the
 # request itself (the tests set it with override_settings).
 MEETINGS_SYNC_PROCESSING = os.getenv("MEETINGS_SYNC_PROCESSING", "0") == "1"

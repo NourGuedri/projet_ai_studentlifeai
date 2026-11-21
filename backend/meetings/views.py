@@ -2,7 +2,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import FileResponse, Http404
 from django.utils import timezone
 from rest_framework import permissions, viewsets
@@ -13,6 +13,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from common import ai
+from learning.models import Formation
 from notifications.services import notify_many
 
 from . import services
@@ -222,6 +223,18 @@ class MeetingViewSet(viewsets.ModelViewSet):
         response["Cache-Control"] = "private, no-store"
         response["X-Content-Type-Options"] = "nosniff"
         return response
+
+    @action(detail=False, methods=["get"], url_path="my-formations")
+    def my_formations(self, request):
+        """Formations taught by the user, for the "invite the students of a formation" list (read only)."""
+        user = request.user
+        enrolled = Q(enrollments__user__is_active=True) & ~Q(enrollments__user=user)
+        formations = (
+            Formation.objects.filter(teacher=user)
+            .annotate(enrolled_count=Count("enrollments", filter=enrolled))
+            .order_by("title", "id")
+        )
+        return Response([{"id": f.id, "title": f.title, "enrolled_count": f.enrolled_count} for f in formations])
 
     @action(detail=True, methods=["post"], url_path="call-ticket")
     def call_ticket(self, request, pk=None):
