@@ -1,0 +1,9 @@
+# Dépendances de la prédiction des retards (module transport, cours de ML)
+# Les modèles .joblib ont été entraînés avec ces versions : garder les mêmes pour les recharger.
+pandas>=2.0
+openpyxl>=3.1          # lecture des fichiers Excel de la TTC (01_collecte.py)
+matplotlib>=3.8        # graphiques des étapes du pipeline
+scikit-learn==1.9.1
+xgboost==3.4.1
+imbalanced-learn==0.14.2
+joblib>=1.3

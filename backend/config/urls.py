@@ -14,6 +14,7 @@ urlpatterns = [
     path("api/meetings/", include("meetings.urls")),
     path("api/mails/", include("mails.urls")),
     path("api/closet/", include("closet.urls")),
+    path("api/transport/", include("transport.urls")),
 
 ]
 if settings.DEBUG:
