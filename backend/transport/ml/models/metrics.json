@@ -1,0 +1,94 @@
+{
+  "trained_on": "2026-11-24",
+  "dataset": "TTC Delay Data 2024 — City of Toronto Open Data (Open Government Licence – Toronto)",
+  "n_rows": 97658,
+  "features": [
+    "mode",
+    "incident_grp",
+    "day",
+    "hour",
+    "month"
+  ],
+  "long_delay_minutes": 15,
+  "decision_threshold": 0.29,
+  "regression": {
+    "model": "XGBoost Regressor",
+    "kfold_5": {
+      "modèle": "XGBoost",
+      "MAE": 6.442,
+      "MAE ±": 0.076,
+      "RMSE": 10.914,
+      "R²": 0.361,
+      "R² ±": 0.008,
+      "temps (s)": 9.691,
+      "taille (Mo)": 1.455
+    }
+  },
+  "classification": {
+    "model": "XGBoost Classifier + SMOTE",
+    "kfold_5": {
+      "modèle": "XGBoost",
+      "Accuracy": 0.744,
+      "Precision": 0.448,
+      "Recall": 0.435,
+      "F1": 0.442,
+      "F1 ±": 0.003,
+      "AUC": 0.762,
+      "AUC ±": 0.003,
+      "temps (s)": 15.414,
+      "taille (Mo)": 5.758
+    },
+    "test_with_threshold": {
+      "modèle": "XGBoost",
+      "seuil": "optimisé",
+      "valeur": 0.286,
+      "Precision": 0.352,
+      "Recall": 0.868,
+      "F1": 0.501
+    }
+  },
+  "categories": {
+    "mode": [
+      "bus",
+      "metro",
+      "tramway"
+    ],
+    "incident_grp": [
+      "AUTRE",
+      "CLEANING - UNSANITARY",
+      "COLLISION - TTC",
+      "DIVERSION",
+      "EMERGENCY SERVICES",
+      "GENERAL DELAY",
+      "INVESTIGATION",
+      "MECHANICAL",
+      "MUIRS",
+      "MUIS",
+      "MUO",
+      "MUPAA",
+      "OPERATIONS",
+      "OPERATIONS - OPERATOR",
+      "PUMEL",
+      "PUOPO",
+      "SECURITY",
+      "SUDP",
+      "SUO",
+      "UTILIZED OFF ROUTE",
+      "VISION"
+    ],
+    "day": [
+      "FRIDAY",
+      "MONDAY",
+      "SATURDAY",
+      "SUNDAY",
+      "THURSDAY",
+      "TUESDAY",
+      "WEDNESDAY"
+    ]
+  },
+  "versions": {
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.1",
+    "imbalanced-learn": "0.14.2"
+  }
+}

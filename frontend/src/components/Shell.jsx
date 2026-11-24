@@ -34,6 +34,7 @@ const NAV = [
   { group: "Vie quotidienne", roles: ["student"] },
   { href: "/closet", label: "Mon dressing", icon: "shirt", roles: ["student"] },
   { href: "/closet/outfit", label: "Tenue du jour", icon: "sun", roles: ["student"] },
+  { href: "/transport", label: "Transport", icon: "bus", roles: ["student"] },
 ];
 
 function Brand() {

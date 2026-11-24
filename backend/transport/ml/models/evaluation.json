@@ -1,0 +1,112 @@
+{
+  "regression_kfold": [
+    {
+      "modèle": "Random Forest",
+      "MAE": 6.428,
+      "MAE ±": 0.075,
+      "RMSE": 10.917,
+      "R²": 0.36,
+      "R² ±": 0.01,
+      "temps (s)": 47.307,
+      "taille (Mo)": 61.448
+    },
+    {
+      "modèle": "XGBoost",
+      "MAE": 6.442,
+      "MAE ±": 0.076,
+      "RMSE": 10.914,
+      "R²": 0.361,
+      "R² ±": 0.008,
+      "temps (s)": 9.691,
+      "taille (Mo)": 1.455
+    }
+  ],
+  "classification_kfold": [
+    {
+      "modèle": "Régression logistique",
+      "Accuracy": 0.583,
+      "Precision": 0.345,
+      "Recall": 0.876,
+      "F1": 0.495,
+      "F1 ±": 0.003,
+      "AUC": 0.748,
+      "AUC ±": 0.004,
+      "temps (s)": 7.252,
+      "taille (Mo)": 4.809
+    },
+    {
+      "modèle": "Random Forest",
+      "Accuracy": 0.608,
+      "Precision": 0.358,
+      "Recall": 0.855,
+      "F1": 0.504,
+      "F1 ±": 0.004,
+      "AUC": 0.768,
+      "AUC ±": 0.003,
+      "temps (s)": 34.289,
+      "taille (Mo)": 39.925
+    },
+    {
+      "modèle": "XGBoost",
+      "Accuracy": 0.744,
+      "Precision": 0.448,
+      "Recall": 0.435,
+      "F1": 0.442,
+      "F1 ±": 0.003,
+      "AUC": 0.762,
+      "AUC ±": 0.003,
+      "temps (s)": 15.414,
+      "taille (Mo)": 5.758
+    }
+  ],
+  "thresholds": [
+    {
+      "modèle": "Régression logistique",
+      "seuil": "0.50 (défaut)",
+      "valeur": 0.5,
+      "Precision": 0.34,
+      "Recall": 0.872,
+      "F1": 0.49
+    },
+    {
+      "modèle": "Régression logistique",
+      "seuil": "optimisé",
+      "valeur": 0.514,
+      "Precision": 0.342,
+      "Recall": 0.867,
+      "F1": 0.49
+    },
+    {
+      "modèle": "Random Forest",
+      "seuil": "0.50 (défaut)",
+      "valeur": 0.5,
+      "Precision": 0.352,
+      "Recall": 0.864,
+      "F1": 0.5
+    },
+    {
+      "modèle": "Random Forest",
+      "seuil": "optimisé",
+      "valeur": 0.53,
+      "Precision": 0.365,
+      "Recall": 0.803,
+      "F1": 0.502
+    },
+    {
+      "modèle": "XGBoost",
+      "seuil": "0.50 (défaut)",
+      "valeur": 0.5,
+      "Precision": 0.449,
+      "Recall": 0.439,
+      "F1": 0.444
+    },
+    {
+      "modèle": "XGBoost",
+      "seuil": "optimisé",
+      "valeur": 0.286,
+      "Precision": 0.352,
+      "Recall": 0.868,
+      "F1": 0.501
+    }
+  ]
+}
