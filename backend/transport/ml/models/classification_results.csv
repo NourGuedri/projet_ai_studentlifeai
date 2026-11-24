@@ -1,0 +1,8 @@
+modèle,Accuracy,Precision,Recall,F1,AUC,temps (s)
+Baseline (classe majoritaire),0.767,0.0,0.0,0.0,0.5,0.221
+Régression logistique,0.577,0.34,0.872,0.49,0.747,1.655
+KNN (k=15),0.674,0.376,0.607,0.464,0.729,7.553
+SVM linéaire,0.578,0.341,0.869,0.49,0.747,1.436
+Decision Tree,0.591,0.345,0.839,0.489,0.748,1.4
+Random Forest,0.598,0.352,0.864,0.5,0.767,7.673
+XGBoost,0.744,0.449,0.439,0.444,0.76,3.056
